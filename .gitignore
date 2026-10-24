@@ -8,3 +8,4 @@ dist/
 *.db-wal
 *.db-shm
 .pytest_cache/
+egg-info/
