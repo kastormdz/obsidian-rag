@@ -9,7 +9,7 @@ SQLite local con embeddings. El vault sigue siendo tuyo y en texto plano.
 ## Instalación
 
 ```bash
-git clone https://github.com/<tu-usuario>/obsidian-rag.git
+git clone https://github.com/kastormdz/obsidian-rag.git
 cd obsidian-rag
 python -m venv .venv && . .venv/bin/activate
 pip install -e .
