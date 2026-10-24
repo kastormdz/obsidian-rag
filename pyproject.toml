@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "obsidian-rag"
+version = "0.1.0"
+description = "Búsqueda semántica y operaciones de archivo sobre un vault de Obsidian"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["fastembed>=0.4", "numpy>=1.26"]
+
+[project.scripts]
+obsn = "rag.obsn:main"
+
+[tool.setuptools]
+packages = ["rag"]

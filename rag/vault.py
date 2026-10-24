@@ -1,0 +1,358 @@
+"""Operaciones de vault sobre el FILESYSTEM, sin daemon.
+
+El cliente MCP hablaba con `localhost:8787` para todo el CRUD; ese daemon se retiró y
+las operaciones quedaron muertas. Este módulo las reimplementa contra los archivos, que
+es lo que el vault realmente es, y mantiene el contrato de cada función.
+
+Reglas de seguridad:
+  - Todo path se resuelve y se verifica que quede DENTRO del vault (no `..`, no symlinks
+    que salgan). Un agente nunca puede tocar `~/.ssh` por pasar `../../`.
+  - Las escrituras son atómicas (temporal + rename en el mismo filesystem).
+  - `borrar()` manda a `.trash/` con timestamp: reversible. `hard=True` es explícito.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import time
+from pathlib import Path
+from typing import Any, Iterable
+
+from .config import VAULT  # una sola fuente de la ruta del vault
+
+EXCLUIDAS = {".obsidian", ".trash", ".git", ".stfolder", ".DS_Store"}
+SECRETOS = Path("03-Personal") / "Secrets"
+
+
+class FueraDelVault(Exception):
+    """El path pedido sale del vault: se rechaza antes de tocar nada."""
+
+
+def _resolver(path: str) -> Path:
+    """Path absoluto dentro del vault. Rechaza `..`, absolutos externos y symlinks que salgan."""
+    crudo = (path or "").strip()
+    # Un path absoluto NO se reinterpreta como relativo: `write /etc/x.md` tiene que fallar,
+    # no crear `<vault>/etc/x.md` (el usuario creería que escribió en /etc).
+    if crudo.startswith("/"):
+        raise FueraDelVault(f"path absoluto: usá una ruta relativa al vault ({crudo})")
+    limpio = crudo
+    # Los DOS lados resueltos: si el vault vive bajo un symlink (TMPDIR, /tmp → /private/tmp),
+    # resolver solo el destino hace que `relative_to` falle con paths que SÍ están adentro.
+    raiz = VAULT.resolve()
+    destino = (raiz / limpio).resolve()
+    try:
+        destino.relative_to(raiz)
+    except ValueError as error:
+        raise FueraDelVault(f"fuera del vault: {path}") from error
+    return destino
+
+
+def _rel(destino: Path) -> str:
+    return destino.relative_to(VAULT).as_posix()
+
+
+def _es_nota(destino: Path) -> bool:
+    return destino.suffix.lower() == ".md" and not any(p in EXCLUIDAS for p in destino.parts)
+
+
+def _recorrer() -> Iterable[Path]:
+    for raiz, dirs, archivos in os.walk(VAULT):
+        dirs[:] = [d for d in dirs if d not in EXCLUIDAS]
+        for nombre in archivos:
+            destino = Path(raiz) / nombre
+            if destino.suffix.lower() == ".md":
+                yield destino
+
+
+def _leer(destino: Path) -> str:
+    return destino.read_text(encoding="utf-8", errors="replace")
+
+
+def _escribir_atomico(destino: Path, contenido: str) -> None:
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    temporal = destino.with_name(f".{destino.name}.tmp-{os.getpid()}")
+    temporal.write_text(contenido, encoding="utf-8")
+    os.replace(temporal, destino)
+
+
+def _titulo(texto: str, destino: Path) -> str:
+    m = re.search(r"^#\s+(.+)$", texto, re.MULTILINE)
+    return m.group(1).strip() if m else destino.stem
+
+
+def _frontmatter(texto: str) -> dict[str, Any]:
+    if not texto.startswith("---"):
+        return {}
+    fin = texto.find("\n---", 3)
+    if fin == -1:
+        return {}
+    datos: dict[str, Any] = {}
+    clave = None
+    for linea in texto[3:fin].splitlines():
+        if not linea.strip():
+            continue
+        if linea.lstrip().startswith("- ") and clave:
+            datos.setdefault(clave, [])
+            if isinstance(datos[clave], list):
+                datos[clave].append(linea.lstrip()[2:].strip().strip("'\""))
+            continue
+        if ":" in linea:
+            clave, _, valor = linea.partition(":")
+            clave = clave.strip()
+            valor = valor.strip().strip("'\"")
+            # Lista INLINE (`tags: [alfa, beta]`): sin esto el valor queda como string y
+            # quien lo recorra termina iterando CARACTERES.
+            if valor.startswith("[") and valor.endswith("]"):
+                datos[clave] = [
+                    x.strip().strip("'\"") for x in valor[1:-1].split(",") if x.strip()
+                ]
+            else:
+                datos[clave] = valor if valor else []
+    return datos
+
+
+def _tags_del_texto(texto: str) -> set[str]:
+    """Tags inline, sin los `#` de bloques de código (`#!/bin/bash`, comentarios de YAML).
+
+    Un `#r` de un script es indistinguible de un tag si no se mira el contexto: se saltan
+    los bloques cercados y se exige un mínimo de 2 caracteres.
+    """
+    encontrados: set[str] = set()
+    en_bloque = False
+    for linea in texto.splitlines():
+        limpia = linea.lstrip()
+        if limpia.startswith("```"):
+            en_bloque = not en_bloque
+            continue
+        # Un heading no es un tag, y dentro de un bloque de código `#` es un comentario.
+        if en_bloque or re.match(r"#{1,6}\s", limpia):
+            continue
+        for etiqueta in re.findall(r"(?<![\w/\[\]{},:])(?<!#)#([A-Za-z][A-Za-z0-9_/-]{1,})", linea):
+            encontrados.add(etiqueta.lower())
+    return encontrados
+
+
+# --------------------------------------------------------------------- operaciones
+
+
+def list_notes(folder: str | None = None, limit: int | None = None, tag: str | None = None,
+               sort_by: str = "modified", **_: Any) -> list[dict[str, str]]:
+    """Notas del vault: `[{name, url}]` como el cliente MCP. Filtra carpeta y tag."""
+    base = _resolver(folder) if folder else VAULT
+    encontradas: list[tuple[float, Path]] = []
+    for destino in _recorrer():
+        if folder and not destino.is_relative_to(base):
+            continue
+        if tag:
+            texto = _leer(destino)
+            etiquetas = _tags_frontmatter(texto)
+            etiquetas |= _tags_del_texto(texto)
+            if tag.lstrip("#").lower() not in etiquetas:
+                continue
+        encontradas.append((destino.stat().st_mtime, destino))
+    encontradas.sort(key=lambda par: par[0], reverse=(sort_by == "modified"))
+    if limit:
+        encontradas = encontradas[: max(1, int(limit))]
+    return [{"name": _rel(d), "url": f"obsidian://open?path={_rel(d)}"} for _, d in encontradas]
+
+
+def read_note(path: str) -> str:
+    """Contenido completo de la nota."""
+    destino = _resolver(path)
+    if not destino.is_file():
+        raise FileNotFoundError(f"no existe la nota: {path}")
+    return _leer(destino)
+
+
+def write_note(path: str, content: str) -> str:
+    """Crea o sobreescribe (atómico). Devuelve una línea con el resultado."""
+    destino = _resolver(path)
+    if destino.suffix.lower() != ".md":
+        destino = destino.with_suffix(".md")
+    existia = destino.is_file()
+    _escribir_atomico(destino, content)
+    accion = "actualizada" if existia else "creada"
+    return f"{accion}: {_rel(destino)} ({len(content)} bytes)"
+
+
+def edit_note(path: str, op: str, content: str) -> str:
+    """append | prepend | replace. `replace` cambia la primera aparición del texto dado."""
+    destino = _resolver(path)
+    if not destino.is_file():
+        raise FileNotFoundError(f"no existe la nota: {path}")
+    actual = _leer(destino)
+    if op == "append":
+        nuevo = actual.rstrip("\n") + "\n" + content
+    elif op == "prepend":
+        nuevo = content + actual
+    elif op == "replace":
+        if content not in actual:
+            raise ValueError("replace: el texto no está en la nota")
+        nuevo = actual.replace(content, "", 1) if False else actual
+        raise ValueError("replace necesita el texto viejo y el nuevo: usá edit_note(old, new)")
+    elif op == "replace-old-new":
+        viejo, _, nuevo_texto = content.partition("\n")
+        if viejo not in actual:
+            raise ValueError("replace: el texto viejo no está en la nota")
+        nuevo = actual.replace(viejo, nuevo_texto, 1)
+    else:
+        raise ValueError(f"operación desconocida: {op} (append|prepend|replace)")
+    _escribir_atomico(destino, nuevo)
+    return f"editada ({op}): {_rel(destino)}"
+
+
+def delete_note(path: str, hard: bool = False) -> str:
+    """Borra: por defecto manda a `.trash/` con timestamp (reversible)."""
+    destino = _resolver(path)
+    if not destino.is_file():
+        raise FileNotFoundError(f"no existe la nota: {path}")
+    if hard:
+        destino.unlink()
+        return f"BORRADA (definitivo): {_rel(destino)}"
+    papelera = VAULT / ".trash"
+    papelera.mkdir(exist_ok=True)
+    sello = time.strftime("%Y%m%d-%H%M%S")
+    destino_movido = papelera / f"{destino.stem} ({sello}){destino.suffix}"
+    shutil.move(str(destino), str(destino_movido))
+    return f"a la papelera: {_rel(destino)} -> .trash/{destino_movido.name}"
+
+
+def move_note(from_path: str, to_path: str) -> str:
+    """Mueve o renombra. No pisa un archivo existente."""
+    origen = _resolver(from_path)
+    destino = _resolver(to_path)
+    if not origen.is_file():
+        raise FileNotFoundError(f"no existe la nota: {from_path}")
+    if destino.exists():
+        raise FileExistsError(f"ya existe: {to_path}")
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(origen), str(destino))
+    return f"movida: {_rel(origen)} -> {_rel(destino)}"
+
+
+def list_folders() -> str:
+    """Carpetas con cantidad de notas, ordenadas."""
+    conteo: dict[str, int] = {}
+    for destino in _recorrer():
+        carpeta = destino.parent.relative_to(VAULT).as_posix()
+        while True:
+            conteo[carpeta] = conteo.get(carpeta, 0) + 1
+            if carpeta in ("", "."):
+                break
+            carpeta = str(Path(carpeta).parent.as_posix())
+            if carpeta == ".":
+                carpeta = ""
+    lineas = [f"{n:5d}  {c or '(raíz)'}" for c, n in sorted(conteo.items())]
+    return "\n".join(lineas)
+
+
+def _tags_frontmatter(texto: str) -> set[str]:
+    """Tags declarados en el frontmatter, siempre como set de strings válidos.
+
+    El frontmatter puede traer una lista (`[a, b]`), una lista en bloque (`- a`) o un
+    string suelto. Centralizarlo acá evita el bug de iterar los CARACTERES del string.
+    """
+    valor = _frontmatter(texto).get("tags", [])
+    crudos = valor if isinstance(valor, list) else [valor]
+    return {
+        str(t).lstrip("#").lower()
+        for t in crudos
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9_/-]*", str(t).lstrip("#"))
+    }
+
+
+def list_tags() -> str:
+    """Tags del frontmatter y del cuerpo, con frecuencia."""
+    frecuencia: dict[str, int] = {}
+    for destino in _recorrer():
+        texto = _leer(destino)
+        etiquetas = _tags_frontmatter(texto)
+        etiquetas |= _tags_del_texto(texto)
+        for etiqueta in etiquetas:
+            frecuencia[etiqueta] = frecuencia.get(etiqueta, 0) + 1
+    return "\n".join(f"{n:5d}  #{t}" for t, n in sorted(frecuencia.items(), key=lambda p: -p[1]))
+
+
+def get_note_metadata(path: str) -> str:
+    """Frontmatter, tags, tamaño, fechas y backlinks."""
+    destino = _resolver(path)
+    if not destino.is_file():
+        raise FileNotFoundError(f"no existe la nota: {path}")
+    texto = _leer(destino)
+    datos = _frontmatter(texto)
+    stat = destino.stat()
+    enlaces = re.findall(r"\[\[([^\]|#]+)", texto)
+    # Obsidian resuelve un wikilink por nombre de archivo, por TÍTULO o por alias. Buscar solo
+    # por `stem` pierde `[[Nota Uno]]` cuando el archivo se llama `uno.md`.
+    nombres = {destino.stem, _titulo(texto, destino)}
+    alias = datos.get("aliases") or datos.get("alias") or []
+    nombres |= {str(a) for a in (alias if isinstance(alias, list) else [alias])}
+    backlinks: list[str] = []
+    for otra in _recorrer():
+        if otra == destino:
+            continue
+        contenido = _leer(otra)
+        if any(f"[[{n}" in contenido for n in nombres if n):
+            backlinks.append(_rel(otra))
+    lineas = [
+        f"path: {_rel(destino)}",
+        f"titulo: {_titulo(texto, destino)}",
+        f"bytes: {stat.st_size}",
+        f"modificado: {time.strftime('%Y-%m-%d %H:%M', time.localtime(stat.st_mtime))}",
+        f"palabras: {len(texto.split())}",
+        f"tags: {', '.join(sorted(datos.get('tags', []))) if datos.get('tags') else '(ninguno)'}",
+    ]
+    for clave, valor in datos.items():
+        if clave != "tags":
+            lineas.append(f"{clave}: {valor}")
+    lineas.append(f"enlaces salientes: {len(enlaces)}")
+    lineas.append(f"backlinks: {len(backlinks)}" + (f" -> {', '.join(backlinks[:8])}" if backlinks else ""))
+    return "\n".join(lineas)
+
+
+def search_notes(terms: Iterable[str] | str, folder: str | None = None, tag: str | None = None,
+                 limit: int = 20, **_: Any) -> list[dict[str, Any]]:
+    """Substring case-insensitive por CONTENIDO (el `rag` es el semántico).
+
+    Rankea primero los aciertos en path o título, después por cantidad de términos.
+    Devuelve una línea de contexto por hit, nunca el cuerpo entero.
+    """
+    lista = [terms] if isinstance(terms, str) else list(terms)
+    lista = [t for t in (str(x).strip().lower() for x in lista) if t]
+    if not lista:
+        return []
+    base = _resolver(folder) if folder else VAULT
+    hits: list[dict[str, Any]] = []
+    for destino in _recorrer():
+        if folder and not destino.is_relative_to(base):
+            continue
+        texto = _leer(destino)
+        bajo = texto.lower()
+        if tag:
+            etiquetas = _tags_frontmatter(texto)
+            etiquetas |= _tags_del_texto(texto)
+            if tag.lstrip("#").lower() not in etiquetas:
+                continue
+        rel = _rel(destino).lower()
+        en_path = any(t in rel for t in lista)
+        encontrados = [t for t in lista if t in bajo]
+        if not encontrados and not en_path:
+            continue
+        contexto = ""
+        for termino in encontrados:
+            i = bajo.find(termino)
+            if i >= 0:
+                inicio = max(0, bajo.rfind("\n", 0, i) + 1)
+                fin = bajo.find("\n", i)
+                contexto = texto[inicio: fin if fin > 0 else len(texto)].strip()[:240]
+                break
+        hits.append({
+            "path": _rel(destino),
+            "matches": len(encontrados),
+            "path_hit": en_path,
+            "context": contexto,
+        })
+    hits.sort(key=lambda h: (not h["path_hit"], -h["matches"], h["path"]))
+    return hits[: max(1, int(limit))]
