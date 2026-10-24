@@ -24,6 +24,7 @@ obsn rag "certificados wildcard"        # búsqueda semántica
 obsn search certificados                # búsqueda léxica por contenido
 obsn reindex                            # construir/actualizar el índice
 obsn status                             # qué hay indexado
+obsn upgrade --check                    # ¿hay versión nueva? (0 al día, 10 hay update)
 
 obsn read  "02-docs/nota.md"            # leer
 obsn write "02-docs/nueva.md" --file ~/tmp/nota.md
@@ -48,6 +49,18 @@ Los nombres largos del estándar MCP también funcionan: `read_note`, `write_not
 | `OBS_RAG_INDEX` | `$XDG_DATA_HOME/obsidian-rag/index.db` | archivo del índice |
 | `OBS_RAG_CACHE` | `$XDG_CACHE_HOME/fastembed` | caché del modelo |
 | `OBS_RAG_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | modelo de embeddings |
+
+## Actualizar
+
+```bash
+obsn upgrade --check   # 0 al día · 10 hay actualización · 1 error
+obsn upgrade           # fetch + fast-forward, reinstala si cambió pyproject.toml, reindexa
+obsn upgrade --how     # qué hace, paso a paso
+```
+
+Se niega a tocar nada si hay cambios locales sin commitear, y nunca crea un merge commit
+(sólo fast-forward). Si la instalación no es editable —no hay `.git` junto al paquete— avisa
+que hay que actualizar con `pip install -U`.
 
 ## Cómo busca
 

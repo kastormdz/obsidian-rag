@@ -50,7 +50,8 @@ intérprete**. `python3` del sistema puede no ser el mismo que el del venv.
 | `obsn rag "consulta" [N]` | búsqueda híbrida (léxica + semántica). `N` default 5, `--json` |
 | `obsn search "texto"` | substring exacto sobre el contenido, sin modelo. `--folder`, `--tag`, `--limit`, `--json` |
 | `obsn reindex [--force]` | indexa/actualiza. Sin `--force` solo toca las notas cuyo **hash** cambió |
-| `obsn status [--json]` | notas, chunks, con_embedding, ruta del índice |
+| `obsn status` | notas, chunks y ruta del índice |
+| `obsn upgrade [--check]` | actualiza el paquete desde su repo y reindexa si hace falta (`--check`: 0 al día, 10 hay update) |
 | `obsn read "ruta.md"` | contenido completo |
 | `obsn write "ruta.md" --file x.md` | crear/sobrescribir (atómico). También por stdin |
 | `obsn edit "ruta.md" append --file x.md` | `append` / `prepend` / `replace` |

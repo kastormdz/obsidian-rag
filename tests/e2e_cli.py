@@ -148,7 +148,18 @@ def main() -> int:
         check("status distingue notas de notas sin chunks",
               bool(est) and "sin_chunks" in est, str(est)[:200])
 
-        # 10) el vault real no se tocó
+        # 10) upgrade: el ciclo completo sin salir a la red
+        p = correr("--version")
+        check("--version imprime la versión", "obsn" in p.stdout and p.returncode == 0, p.stdout[:120])
+        p = correr("upgrade", "--how")
+        check("upgrade --how explica el procedimiento", p.returncode == 0 and "actualiz" in p.stdout.lower(),
+              p.stdout[:200])
+        p = correr("upgrade", "--check")
+        sin_red = p.returncode == 1 and "no pude consultar" in (p.stderr + p.stdout)
+        check("upgrade --check responde (al día / hay update)",
+              p.returncode in (0, 10) or sin_red, f"rc={p.returncode} {p.stderr[:150]}")
+
+        # 11) el vault real no se tocó
         real = Path.home() / "Obsidian"
         check("el vault real sigue existiendo", not (str(real) in ENV["OBS_RAG_VAULT"]), ENV["OBS_RAG_VAULT"])
     finally:

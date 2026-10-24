@@ -8,6 +8,7 @@ son alias, para que la misma herramienta sirva desde un agente y desde una termi
     obsn search "texto"          búsqueda léxica por contenido (sin modelo)
     obsn reindex [--force]       construir/actualizar el índice
     obsn status                  estado del índice
+    obsn upgrade [--check]       actualizar el paquete desde su repo git
 
     obsn read  <path>            leer una nota
     obsn write <path>            crear/sobreescribir (contenido por stdin o --file)
@@ -97,6 +98,12 @@ def cmd_reindex(args: argparse.Namespace) -> None:
     from . import index
 
     index.build(force=args.force)
+
+
+def cmd_upgrade(args: argparse.Namespace) -> None:
+    from . import upgrade
+
+    raise SystemExit(upgrade.main(check=args.check, how=args.how, reindexar=not args.no_reindex))
 
 
 def cmd_status(args: argparse.Namespace) -> None:
@@ -208,6 +215,11 @@ def construir_parser() -> argparse.ArgumentParser:
         prog="obsn",
         description="Vault de Obsidian: RAG semántico + operaciones de archivo.",
     )
+    try:
+        from importlib.metadata import version as _v
+        ap.add_argument("--version", action="version", version=f"obsn {_v('obsidian-rag')}")
+    except Exception:
+        ap.add_argument("--version", action="version", version="obsn (versión desconocida)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("rag", help="búsqueda semántica")
@@ -231,6 +243,13 @@ def construir_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("status", help="estado del índice")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("upgrade", help="actualizar el paquete desde su repo git")
+    p.add_argument("--check", action="store_true",
+                   help="sólo informar: 0 al día, 10 hay actualización, 1 error")
+    p.add_argument("--how", action="store_true", help="explicar el procedimiento")
+    p.add_argument("--no-reindex", action="store_true", help="no reindexar después de actualizar")
+    p.set_defaults(func=cmd_upgrade)
 
     p = sub.add_parser("graph", help="auditoría del grafo de wikilinks")
     p.add_argument("resto", nargs=argparse.REMAINDER)
