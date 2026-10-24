@@ -51,13 +51,30 @@ Los nombres largos del estándar MCP también funcionan: `read_note`, `write_not
 
 ## Cómo busca
 
-- **`rag`** embebe la consulta y compara contra los fragmentos del índice (coseno, con un
-  componente léxico). Encuentra por significado: `rag "cómo pago el gas"` llega a una nota que
-  habla de "servicios" y "facturas".
+Búsqueda **híbrida**: índice invertido (léxico, con peso IDF) + embeddings (semántico), en un
+solo score.
+
+- **`rag`** combina las dos señales: `0.6 · tf·idf + 0.4 · coseno + 0.35 · cobertura`, con un
+  boost si el término aparece en el path o el heading. Si no hay ninguna palabra de la consulta
+  en el fragmento, exige coseno ≥ 0.62 y **devuelve vacío** antes que devolver ruido.
 - **`search`** es substring sobre el contenido, sin modelo: rápido y exacto, para cuando sabés
   la palabra.
+- El chunking respeta la estructura: un bloque de tabla o de lista es **un** chunk, no una fila
+  por chunk.
 - El índice se arma por **hash del contenido**: `reindex` sin `--force` solo reindexa lo que
-  cambió.
+  cambió. Un `touch` no lo engaña; una edición del mismo largo tampoco.
+
+**Limitación medida:** con el modelo por defecto la recuperación puramente semántica es débil
+—10 paráfrasis sin palabras en común con la nota: acierta el top-1 en 1–2 de 10—. Rinde cuando
+la consulta comparte al menos un término concreto. `bench/bench_search.py` mide eso y
+`bench/compare_models.py` permite evaluar otro modelo antes de adoptarlo.
+
+## Para agentes
+
+[`skills/obsidian-rag/SKILL.md`](skills/obsidian-rag/SKILL.md) es una skill lista para cargar
+(frontmatter YAML + protocolo): cuándo usar `rag` y cuándo `search`, qué hacer si devuelve
+vacío, cómo citar la nota, y las trampas de argv. Apuntá al agente ahí en vez de explicarle la
+herramienta.
 
 ## Seguridad
 
@@ -75,6 +92,13 @@ python -m unittest discover -s tests -t .
 ```
 
 Corren contra un vault temporal; no tocan ningún vault real.
+
+Para medir recuperación y latencia (lo que hay que correr antes de cambiar el ranking, el
+chunker o el modelo):
+
+```bash
+python bench/bench_search.py --verbose
+```
 
 ## Licencia
 
