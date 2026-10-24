@@ -145,6 +145,8 @@ def main() -> int:
         check("status --json emite JSON válido", est is not None, p.stdout[:200])
         check("status reporta 0 notas después de borrar la única",
               bool(est) and est.get("notas") == 0, str(est)[:200])
+        check("status distingue notas de notas sin chunks",
+              bool(est) and "sin_chunks" in est, str(est)[:200])
 
         # 10) el vault real no se tocó
         real = Path.home() / "Obsidian"

@@ -107,22 +107,30 @@ def cmd_status(args: argparse.Namespace) -> None:
     if not config.DB.exists():
         raise SystemExit(f"no hay índice en {config.DB}: corré `obsn reindex`")
     with sqlite3.connect(config.DB) as c:
-        notas = c.execute("SELECT COUNT(DISTINCT path) FROM chunks").fetchone()[0]
+        # `notes` es la fuente de verdad de lo indexado. Contar paths distintos en
+        # `chunks` subcuenta: una nota sin cuerpo (solo frontmatter, o <20 chars) no
+        # genera chunks y desaparecía del total (medido: 193 vs 196 reales).
+        notas = c.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
         chunks = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
         con_vec = c.execute("SELECT COUNT(*) FROM chunks WHERE vec IS NOT NULL").fetchone()[0]
+        sin_chunks = c.execute(
+            "SELECT COUNT(*) FROM notes WHERE COALESCE(n_chunks, 0) = 0"
+        ).fetchone()[0]
     datos = {
         "indice": str(config.DB),
         "vault": str(config.VAULT),
         "notas": notas,
         "chunks": chunks,
         "con_embedding": con_vec,
+        "sin_chunks": sin_chunks,
         "modelo": config.MODELO,
     }
     if args.json:
         _json(datos)
         return
     print(
-        f"notas={datos['notas']} chunks={datos['chunks']} con_embedding={datos['con_embedding']}\n"
+        f"notas={datos['notas']} chunks={datos['chunks']} "
+        f"con_embedding={datos['con_embedding']} sin_chunks={datos['sin_chunks']}\n"
         f"vault={datos['vault']}\nindice={datos['indice']}"
     )
 
