@@ -1,29 +1,23 @@
 """
-obsidian-index.py — Índice local persistente de chunks del vault.
+index — índice local de chunks del vault, con embeddings.
 
 POR QUÉ EXISTE
 ─────────────
-El RAG anterior (rag_improved) hablaba con el server MCP en CADA query:
-Stage 1b leía el contenido de las 155 notas, Stage 2 volvía a leer los
-candidatos. Con el bug de concurrencia SSE eso eran MINUTOS.
-
-Este índice mantiene TODO el texto chunkeado + embeddings en SQLite local.
-El RAG pasa a ser: query → SQLite (milisegundos) → resultados.
-El server MCP queda solo para ESCRIBIR y para releer una nota puntual.
+Buscar leyendo y embebiendo las notas en cada consulta cuesta minutos: este módulo
+mantiene el texto chunkeado + los vectores en un SQLite local, así una búsqueda es
+`query → SQLite` en milisegundos.
 
 SINCRONIZACIÓN
 ──────────────
-- indexar() relee el vault vía MCP (una vez, serializado) y actualiza solo
-  las notas cuyo mtime cambió.
-- Las escrituras (write/edit/delete/move) llaman refresh_note()/forget_note()
-  para mantenerlo al día sin reindexar todo.
-- build: `obsidian-index.py build`  (o `rebuild` para forzar)
+- `build()` camina el vault en disco y actualiza solo las notas cuyo HASH cambió.
+- `build(force=True)` reindexa todo.
+- El índice es un archivo local: se puede borrar y reconstruir sin pérdida.
 
 USO
 ───
-  python3 obsidian-index.py build          # indexa/actualiza
-  python3 obsidian-index.py status         # stats
-  python3 obsidian-index.py search "query"  # query+rank, igual que el RAG
+    obsn reindex            # indexa/actualiza
+    obsn status             # stats
+    obsn rag "consulta"     # búsqueda semántica
 """
 import hashlib
 import json
@@ -142,15 +136,6 @@ def _migrate_legacy_embeddings(c: sqlite3.Connection) -> None:
         print(f"[index] migrados {n} embeddings historicos desde obsidian-embeddings.db", flush=True)
     except Exception as exc:
         print(f"[index] no se migraron los embeddings historicos: {exc}", file=sys.stderr)
-
-
-# ── Cliente MCP (import perezoso) ────────────────────────────────────────────
-def client():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("mcpc", CLIENT)
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
 
 
 # ── Chunking (mismo criterio que el cliente: headings, fences, tablas) ───────
@@ -601,7 +586,7 @@ def _main() -> None:
         for r in res:
             print(f"  {r['score']:.3f}  {r['path']} :: {r.get('heading')} ({r['chunk_type']})")
     else:
-        print("uso: obsidian-index.py {build [--force]|status|search 'query' [N]}")
+        print("uso: obsn {reindex [--force]|status|rag 'consulta' [N]}")
 
 
 if __name__ == "__main__":
