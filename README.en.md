@@ -103,6 +103,28 @@ it is not a readable copy of the vault.
 Vectors are cached by a hash of the text plus the model. That is why `reindex --force` with a
 warm cache takes 7 s instead of 198.
 
+## Alongside ovaultd
+
+This is not a sync tool. If you want the vault on several machines and a server that cannot
+read it, that is a different project: [ovaultd](https://github.com/kastormdz/ovaultd), a
+self-hosted sync server that stores encrypted blobs and knows neither the content nor the
+paths.
+
+They complement each other, and neither needs the other:
+
+| | ovaultd | obsidian-rag |
+|---|---|---|
+| What it solves | getting the vault onto all your machines without the server reading it | finding and editing notes on the machine you are on |
+| Where the data lives | encrypted blobs on your server | plaintext markdown on your disk |
+| What the index sees | nothing, it does not read blobs | the local text |
+
+That split is exactly why it works: ovaultd never holds the plaintext, so the index cannot be
+fed from the server. It indexes the vault on the machine running `obsn`. When ovaultd writes a
+change to disk, the next `reindex` picks it up; when you write through `obsn`, the background
+worker handles it.
+
+Neither one will ask you to install the other.
+
 ## Background reindex
 
 `write`, `edit`, `delete` and `move` trigger a separate reindex: `fork+exec`, a 1.5 s wait to
