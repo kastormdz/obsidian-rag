@@ -72,8 +72,22 @@ precondiciones() {
 
     OBSN="$(command -v obsn || true)"
     [ -n "$OBSN" ] || die "obsn no está en PATH"
-    PYBIN="$(head -1 "$OBSN" | sed 's/^#!//' | awk '{print $1}')"
-    [ -x "$PYBIN" ] || die "no pude resolver el intérprete de obsn ($PYBIN)"
+    PYBIN="$(resolver_python)"
+    "$PYBIN" -c "import rag" 2>/dev/null \
+        || die "$PYBIN no puede importar rag (¿la instalación es editable?)"
+}
+
+resolver_python() {
+    local candidato
+    # Puede ser un console-script de pip (`#!<venv>/bin/python`) o un launcher de bash que
+    # hace `exec "<venv>/bin/python" -m ...`. En los dos casos la ruta está en el archivo,
+    # así que se busca ahí: el shebang del wrapper es `env bash` y no sirve.
+    candidato="$(grep -hoE '[^ "'"'"']*/python[0-9.]*' "$OBSN" 2>/dev/null | head -1)"
+    if [ -n "$candidato" ] && [ -x "$candidato" ]; then
+        printf '%s' "$candidato"
+        return 0
+    fi
+    command -v python3
 }
 
 main() {
@@ -91,6 +105,7 @@ main() {
     [ -n "$antes" ] || die "no pude leer la versión de pyproject.toml"
 
     echo "instalada: $antes"
+    echo "intérprete: $PYBIN"
     echo "tags: $(git tag -l 'v*' | sort -V | tr '\n' ' ' | sed 's/ $//' | grep . || echo '(ninguno)')"
 
     if [ "$check" = 1 ]; then
