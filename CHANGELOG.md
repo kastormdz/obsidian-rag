@@ -20,7 +20,7 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
   conoce la herramienta.
 - `bench/bench_search.py` (grupos POS, NEG y EXACT, con `--json`), `bench/compare_models.py`
   y `bench/gate.sh` con umbrales numéricos.
-- 62 tests contra vaults temporales.
+- 66 tests contra vaults temporales.
 - README en español y en inglés.
 
 ### Changed
