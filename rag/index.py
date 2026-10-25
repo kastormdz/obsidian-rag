@@ -441,57 +441,77 @@ def build(force: bool = False) -> None:
         print(f"[build] purgadas {len(stale)} notas que ya no estan en el vault", flush=True)
 
     for i, (path, mt, body) in enumerate(changed, 1):
-        # Los postings viejos apuntan a chunks que se van a borrar: hay que sacarlos
-        # ANTES, si no quedan huérfanos apuntando a ids que ya no existen.
-        ids_viejos = [r[0] for r in c.execute("SELECT id FROM chunks WHERE path=?", (path,))]
-        if ids_viejos:
-            c.executemany("DELETE FROM postings WHERE chunk=?", [(i2,) for i2 in ids_viejos])
-        c.execute("DELETE FROM chunks WHERE path=?", (path,))
-        chunks = chunk(body)
-        # Path + heading en el texto embebido: sin el nombre de la nota, un chunk como
-        # "Primer deploy" es indistinguible de miles.
-        vecs = (embed_all([f"{path} :: {ch['heading'] or ''} :: {ch['text']}" for ch in chunks], c)
-                if chunks else [])
-        # Vectores NORMALIZADOS: la búsqueda es un solo matmul, sin recalcular normas.
-        import numpy as np
-        empaquetados = []
-        for v in vecs:
-            if v is None:
-                empaquetados.append(None)
-            else:
-                norma = float(np.linalg.norm(v)) or 1.0
-                empaquetados.append((v / norma).astype("float32").tobytes())
-        filas_postings: list[list[tuple[str, int, int]]] = []
-        tuplas = []
-        for j, ch in enumerate(chunks):
-            filas = _fila_postings(ch["text"], f"{path} {ch['heading'] or ''}")
-            filas_postings.append(filas)
-            tuplas.append((path, j, ch["heading"], ch["hlevel"], ch["ctype"], ch["text"],
-                           empaquetados[j], sum(n for _, n, _ in filas)))
-        c.executemany(
-            "INSERT INTO chunks (path, ord, heading, hlevel, ctype, text, vec, n_tok)"
-            " VALUES (?,?,?,?,?,?,?,?)",
-            tuplas,
-        )
-        ids_nuevos = [r[0] for r in
-                      c.execute("SELECT id FROM chunks WHERE path=? ORDER BY ord", (path,))]
-        pendientes = [(t, cid, n, im)
-                      for filas, cid in zip(filas_postings, ids_nuevos)
-                      for t, n, im in filas]
-        if pendientes:
+        # Chunks y vectores PRIMERO: si el embedding falla, la nota queda intacta porque
+        # todavía no se borró nada. `embed_all` commitea su caché, así que el SAVEPOINT
+        # va después (un COMMIT adentro lo cerraría).
+        try:
+            chunks = chunk(body)
+            # Path + heading en el texto embebido: sin el nombre de la nota, un chunk
+            # como "Primer deploy" es indistinguible de miles.
+            vecs = (embed_all([f"{path} :: {ch['heading'] or ''} :: {ch['text']}"
+                               for ch in chunks], c) if chunks else [])
+        except Exception as exc:
+            failed.append(path)
+            print(f"[build] {path}: {exc}", file=sys.stderr, flush=True)
+            continue
+        # Una nota que falla no puede dejar el índice a medias ni arrastrar al resto:
+        # SAVEPOINT y commit POR NOTA. Sin esto, el borrado de una nota que después
+        # explota quedaba firme en el commit de la nota 10 y sus chunks se perdían.
+        c.execute("SAVEPOINT nota")
+        try:
+            # Los postings viejos apuntan a chunks que se van a borrar: hay que sacarlos
+            # ANTES, si no quedan huérfanos apuntando a ids que ya no existen.
+            ids_viejos = [r[0] for r in c.execute("SELECT id FROM chunks WHERE path=?", (path,))]
+            if ids_viejos:
+                c.executemany("DELETE FROM postings WHERE chunk=?", [(i2,) for i2 in ids_viejos])
+            c.execute("DELETE FROM chunks WHERE path=?", (path,))
+            # Vectores NORMALIZADOS: la búsqueda es un solo matmul, sin recalcular normas.
+            import numpy as np
+            empaquetados = []
+            for v in vecs:
+                if v is None:
+                    empaquetados.append(None)
+                else:
+                    norma = float(np.linalg.norm(v)) or 1.0
+                    empaquetados.append((v / norma).astype("float32").tobytes())
+            filas_postings: list[list[tuple[str, int, int]]] = []
+            tuplas = []
+            for j, ch in enumerate(chunks):
+                filas = _fila_postings(ch["text"], f"{path} {ch['heading'] or ''}")
+                filas_postings.append(filas)
+                tuplas.append((path, j, ch["heading"], ch["hlevel"], ch["ctype"], ch["text"],
+                               empaquetados[j], sum(n for _, n, _ in filas)))
             c.executemany(
-                "INSERT OR REPLACE INTO postings (term, chunk, n, in_meta) VALUES (?,?,?,?)",
-                pendientes,
+                "INSERT INTO chunks (path, ord, heading, hlevel, ctype, text, vec, n_tok)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                tuplas,
             )
-        chash = hashlib.sha1(body.encode("utf-8", "replace")).hexdigest()
-        c.execute(
-            "INSERT OR REPLACE INTO notes (path, mtime, size, hash, n_chunks, indexed_at)"
-            " VALUES (?,?,?,?,?,?)",
-            (path, mt, len(body), chash, len(chunks), time.time()),
-        )
+            ids_nuevos = [r[0] for r in
+                          c.execute("SELECT id FROM chunks WHERE path=? ORDER BY ord", (path,))]
+            pendientes = [(t, cid, n, im)
+                          for filas, cid in zip(filas_postings, ids_nuevos)
+                          for t, n, im in filas]
+            if pendientes:
+                c.executemany(
+                    "INSERT OR REPLACE INTO postings (term, chunk, n, in_meta) VALUES (?,?,?,?)",
+                    pendientes,
+                )
+            chash = hashlib.sha1(body.encode("utf-8", "replace")).hexdigest()
+            c.execute(
+                "INSERT OR REPLACE INTO notes (path, mtime, size, hash, n_chunks, indexed_at)"
+                " VALUES (?,?,?,?,?,?)",
+                (path, mt, len(body), chash, len(chunks), time.time()),
+            )
+            c.execute("RELEASE nota")
+            c.commit()
+        except Exception as exc:
+            c.execute("ROLLBACK TO nota")
+            c.execute("RELEASE nota")
+            failed.append(path)
+            print(f"[build] {path}: {exc}", file=sys.stderr, flush=True)
+            continue
         if i % 10 == 0:
-            c.commit(); print(f"  … {i}/{len(changed)}", flush=True)
-    c.commit()
+            print(f"  … {i}/{len(changed)}", flush=True)
 
     # df (document frequency para TF-IDF). Recalcularlo recorre TODOS los chunks y los
     # tokeniza: ~100 ms. Si no cambió ninguna nota, el df viejo sigue siendo correcto.
@@ -508,7 +528,7 @@ def build(force: bool = False) -> None:
     withvec = c.execute("SELECT COUNT(*) FROM chunks WHERE vec IS NOT NULL").fetchone()[0]
     print(f"[build] listo: {len(notes)} notas, {total} chunks ({withvec} con embedding)", flush=True)
     if failed:
-        print(f"[build] no leídas: {len(failed)} -> {failed[:5]}", flush=True)
+        print(f"[build] fallidas: {len(failed)} -> {failed[:5]}", flush=True)
 
     # Un build NUNCA vuelve a pasar en silencio con notas afuera del índice:
     # verifica que cada nota listada del vault tenga su fila en `notes`.

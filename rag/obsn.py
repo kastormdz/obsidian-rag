@@ -142,7 +142,14 @@ def cmd_status(args: argparse.Namespace) -> None:
         # `notes` es la fuente de verdad de lo indexado. Contar paths distintos en
         # `chunks` subcuenta: una nota sin cuerpo (solo frontmatter, o <20 chars) no
         # genera chunks y desaparecía del total (medido: 193 vs 196 reales).
-        notas = c.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+        try:
+            notas = c.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+        except sqlite3.OperationalError as exc:
+            # Índice de un formato anterior (sin tabla `notes`) o archivo que no es una DB:
+            # sin esto el usuario ve un traceback de sqlite en vez de qué hacer.
+            raise SystemExit(
+                f"índice incompleto en {config.DB} ({exc}): corré `obsn reindex --force`"
+            ) from None
         chunks = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
         con_vec = c.execute("SELECT COUNT(*) FROM chunks WHERE vec IS NOT NULL").fetchone()[0]
         sin_chunks = c.execute(
@@ -220,6 +227,8 @@ def cmd_move(args: argparse.Namespace) -> None:
 
 
 def cmd_list(args: argparse.Namespace) -> None:
+    if args.limit is not None and args.limit < 0:
+        raise SystemExit("--limit no puede ser negativo (0 o sin --limit = todas)")
     notas = vault.list_notes(folder=args.folder, limit=args.limit, tag=args.tag)
     if args.json:
         _json(notas)
