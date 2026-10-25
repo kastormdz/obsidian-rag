@@ -8,6 +8,11 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ## [Unreleased]
 
+### Changed
+
+- `scripts/release.sh` calla los avisos de dependencias del venv anfitrión y sólo los
+  muestra si `pip` falla.
+
 ## [0.2.0] - 2026-10-25
 
 ### Added

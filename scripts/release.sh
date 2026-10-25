@@ -190,7 +190,13 @@ PY
 
     echo
     echo "== reinstalar para que obsn --version lo refleje =="
-    "$PYBIN" -m pip install -e "$REPO" --quiet || die "pip install -e falló"
+    local salida
+    # Los conflictos de dependencias del venv anfitrión (browser-use y compañía) son ruido
+    # preexistente: se muestran sólo si pip falla de verdad.
+    if ! salida="$("$PYBIN" -m pip install -e "$REPO" --quiet --no-input 2>&1)"; then
+        printf '%s\n' "$salida" >&2
+        die "pip install -e falló"
+    fi
     local instalada
     instalada="$("$OBSN" --version 2>/dev/null | awk '{print $2}')"
     [ "$instalada" = "$version" ] || rojo "ojo: obsn --version dice '$instalada'"
