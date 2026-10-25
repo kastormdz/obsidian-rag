@@ -50,7 +50,24 @@ def _resolver(path: str) -> Path:
 
 
 def _rel(destino: Path) -> str:
-    return destino.relative_to(VAULT).as_posix()
+    # Los DOS lados resueltos: `_resolver` devuelve paths resueltos y `VAULT` puede vivir
+    # bajo un symlink (TMPDIR, /tmp → /private/tmp). Sin esto, `relative_to` falla con un
+    # path que SÍ está adentro y el usuario ve un ValueError incomprensible.
+    return destino.resolve().relative_to(VAULT.resolve()).as_posix()
+
+
+def _dentro(destino: Path, pedido: str) -> Path:
+    """Revalida que un path YA transformado siga dentro del vault.
+
+    Hace falta porque transformar el nombre puede sacarlo: `write "."` resuelve a la raíz
+    del vault y `with_suffix(".md")` la convierte en `<vault>.md`, es decir un archivo AL
+    LADO del vault. Medido 2026-10-24: creaba el archivo fuera antes de fallar.
+    """
+    raiz = VAULT.resolve()
+    resuelto = destino.resolve()
+    if not resuelto.is_relative_to(raiz):
+        raise FueraDelVault(f"fuera del vault: {pedido!r}")
+    return resuelto
 
 
 def _es_nota(destino: Path) -> bool:
@@ -73,7 +90,12 @@ def _leer(destino: Path) -> str:
 def _escribir_atomico(destino: Path, contenido: str) -> None:
     destino.parent.mkdir(parents=True, exist_ok=True)
     temporal = destino.with_name(f".{destino.name}.tmp-{os.getpid()}")
-    temporal.write_text(contenido, encoding="utf-8")
+    # fsync ANTES del rename: sin esto, un corte de luz puede dejar el rename hecho y el
+    # contenido todavía en el page cache (archivo vacío o truncado). Cuesta ~1 ms.
+    with open(temporal, "w", encoding="utf-8") as fh:
+        fh.write(contenido)
+        fh.flush()
+        os.fsync(fh.fileno())
     os.replace(temporal, destino)
 
 
@@ -169,8 +191,12 @@ def read_note(path: str) -> str:
 def write_note(path: str, content: str) -> str:
     """Crea o sobreescribe (atómico). Devuelve una línea con el resultado."""
     destino = _resolver(path)
+    if destino.is_dir():
+        raise ValueError(f"es una carpeta, no una nota: {path!r}")
     if destino.suffix.lower() != ".md":
-        destino = destino.with_suffix(".md")
+        # Revalidar SIEMPRE después de cambiar el nombre: con `path=""` o `"."` el
+        # `with_suffix` apunta al lado del vault, no adentro.
+        destino = _dentro(destino.with_suffix(".md"), path)
     existia = destino.is_file()
     _escribir_atomico(destino, content)
     accion = "actualizada" if existia else "creada"
@@ -188,10 +214,12 @@ def edit_note(path: str, op: str, content: str) -> str:
     elif op == "prepend":
         nuevo = content + actual
     elif op == "replace":
-        if content not in actual:
-            raise ValueError("replace: el texto no está en la nota")
-        nuevo = actual.replace(content, "", 1) if False else actual
-        raise ValueError("replace necesita el texto viejo y el nuevo: usá edit_note(old, new)")
+        # `replace` sólo tiene sentido con el texto viejo, y el CLI lo manda por
+        # `replace-old-new`. Antes había una rama muerta que armaba `nuevo` y después
+        # lanzaba siempre: código que no podía funcionar y confundía el mensaje.
+        raise ValueError(
+            "replace necesita el texto viejo: usá `obsn edit <path> replace <nuevo> <viejo>`"
+        )
     elif op == "replace-old-new":
         viejo, _, nuevo_texto = content.partition("\n")
         if viejo not in actual:
@@ -214,9 +242,18 @@ def delete_note(path: str, hard: bool = False) -> str:
     papelera = VAULT / ".trash"
     papelera.mkdir(exist_ok=True)
     sello = time.strftime("%Y%m%d-%H%M%S")
-    destino_movido = papelera / f"{destino.stem} ({sello}){destino.suffix}"
+    rel = _rel(destino)
+    # Dos notas homónimas en carpetas distintas, borradas en el mismo segundo, iban al
+    # MISMO archivo: `shutil.move` pisaba la primera y esa nota se perdía. Se conserva la
+    # carpeta de origen en el nombre y, si aun así colisiona, se numera.
+    nombre = f"{rel.replace('/', '__')} ({sello})"
+    destino_movido = papelera / f"{nombre}{destino.suffix}"
+    n = 1
+    while destino_movido.exists():
+        destino_movido = papelera / f"{nombre}-{n}{destino.suffix}"
+        n += 1
     shutil.move(str(destino), str(destino_movido))
-    return f"a la papelera: {_rel(destino)} -> .trash/{destino_movido.name}"
+    return f"a la papelera: {rel} -> .trash/{destino_movido.name}"
 
 
 def move_note(from_path: str, to_path: str) -> str:

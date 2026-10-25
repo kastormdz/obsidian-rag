@@ -256,13 +256,17 @@ def main() -> None:
         return
 
     # ── aplicar ──
-    import obsc
+    # Antes esto hacía `import obsc` y llamaba al cliente MCP del stack viejo, que se
+    # borró: `obsn link --apply` moría con ModuleNotFoundError. Ahora va directo al
+    # filesystem, con las mismas garantías (path confinado + escritura atómica).
+    from .vault import edit_note, read_note
+
     tocadas = 0
     for p, cands in ranking:
         if tocadas >= a.max:
             break
         try:
-            body = obsc.call("read_note", {"path": p})
+            body = read_note(p)
         except Exception as e:
             print(f"  ! no pude leer {p}: {e}")
             continue
@@ -284,7 +288,7 @@ def main() -> None:
         line = "\n\n## 🔗 Notas relacionadas\n\n" + "\n".join(
             f"- [[{os.path.splitext(os.path.basename(q))[0]}]]" for q in nuevos)
         try:
-            obsc.call("edit_note", {"path": p, "content": line, "operation": "append"})
+            edit_note(p, "append", line)
             print(f"  ✓ {p}  ←  {len(nuevos)} links")
             tocadas += 1
         except Exception as e:

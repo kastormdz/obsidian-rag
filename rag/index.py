@@ -530,14 +530,16 @@ def build(force: bool = False) -> None:
             c.commit(); print(f"  … {i}/{len(changed)}", flush=True)
     c.commit()
 
-    # df (document frequency para TF-IDF)
-    c.execute("DELETE FROM df")
-    df: dict[str, int] = {}
-    for (txt,) in c.execute("SELECT text FROM chunks"):
-        for t in set(tok(txt)):
-            df[t] = df.get(t, 0) + 1
-    c.executemany("INSERT INTO df (term, n) VALUES (?,?)", df.items())
-    c.commit()
+    # df (document frequency para TF-IDF). Recalcularlo recorre TODOS los chunks y los
+    # tokeniza: ~100 ms. Si no cambió ninguna nota, el df viejo sigue siendo correcto.
+    if changed or stale or not c.execute("SELECT COUNT(*) FROM df").fetchone()[0]:
+        c.execute("DELETE FROM df")
+        df: dict[str, int] = {}
+        for (txt,) in c.execute("SELECT text FROM chunks"):
+            for t in set(tok(txt)):
+                df[t] = df.get(t, 0) + 1
+        c.executemany("INSERT INTO df (term, n) VALUES (?,?)", df.items())
+        c.commit()
 
     total = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
     withvec = c.execute("SELECT COUNT(*) FROM chunks WHERE vec IS NOT NULL").fetchone()[0]
@@ -648,6 +650,10 @@ def search(query: str, k: int = 5, alpha: float = 0.6) -> list[dict]:
     masa_total = sum(idf.get(t, 0.0) for t in key_set) or 1.0
 
     # ── Señal léxica: índice invertido. Nada de tokenizar el vault por consulta.
+    # Se consultan TODOS los términos de la consulta, stopwords incluidas: se probó
+    # filtrarlas (2026-10-24) y, aunque hace la cobertura "honesta", cuesta recall al
+    # mismo umbral (POS 3/5/1 -> 2/3/3 con cobertura por nota). La latencia ya la gana
+    # la fase léxica, no este filtro.
     marcas = ",".join("?" * len(qset))
     por_chunk: dict[int, dict[str, float]] = {}
     for term, cid, n, im in c.execute(

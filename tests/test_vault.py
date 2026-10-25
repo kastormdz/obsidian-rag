@@ -143,6 +143,40 @@ class VaultTemporal(unittest.TestCase):
         self.assertIn("#uno", etiquetas)
         self.assertIn("#dos", etiquetas)
 
+    # --- regresiones de la auditoría 2026-10-24
+
+    def test_write_con_path_vacio_no_escribe_fuera_del_vault(self) -> None:
+        # `write "."` resolvía a la raíz y `with_suffix(".md")` la convertía en
+        # `<vault>.md`, un archivo AL LADO del vault. Ahora se rechaza (la raíz es una
+        # carpeta) y no se crea nada.
+        for ruta in (".", "./", ""):
+            with self.subTest(ruta=ruta):
+                with self.assertRaises((vault.FueraDelVault, ValueError)):
+                    vault.write_note(ruta, "contenido")
+        fuera = [p for p in self.raiz.parent.iterdir() if p.is_file() and p.suffix == ".md"]
+        self.assertEqual(fuera, [], f"se escribió fuera del vault: {fuera}")
+
+    def test_write_a_una_carpeta_falla_claro(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            vault.write_note("A", "contenido")
+        self.assertIn("carpeta", str(ctx.exception).lower())
+
+    def test_borrar_dos_notas_homonimas_no_pierde_ninguna(self) -> None:
+        # Mismo nombre en carpetas distintas, borradas en el mismo segundo: iban al mismo
+        # archivo de la papelera y `shutil.move` pisaba una.
+        (self.raiz / "A" / "igual.md").write_text("una", encoding="utf-8")
+        (self.raiz / "B" / "igual.md").write_text("otra", encoding="utf-8")
+        vault.delete_note("A/igual.md")
+        vault.delete_note("B/igual.md")
+        en_papelera = sorted((self.raiz / ".trash").iterdir())
+        self.assertEqual(len(en_papelera), 2, f"papelera: {[p.name for p in en_papelera]}")
+        contenidos = {p.read_text(encoding="utf-8") for p in en_papelera}
+        self.assertEqual(contenidos, {"una", "otra"})
+
+    def test_edit_replace_sin_texto_viejo_falla(self) -> None:
+        with self.assertRaises(ValueError):
+            vault.edit_note("B/dos.md", "replace", "texto nuevo")
+
 
 if __name__ == "__main__":
     unittest.main()
