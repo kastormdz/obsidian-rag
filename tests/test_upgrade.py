@@ -94,6 +94,45 @@ class Upgrade(unittest.TestCase):
         self.assertEqual(despues["atras"], 0)
         self.assertNotEqual(antes, despues["head"], "el HEAD tiene que haberse movido")
 
+    # --- versiones (tags)
+
+    def _tag(self, version: str) -> None:
+        git("tag", "-a", f"v{version}", "-m", f"v{version}", cwd=self.otro)
+        git("push", "origin", f"v{version}", cwd=self.otro)
+
+    def test_lee_el_tag_mas_alto(self) -> None:
+        self._tag("0.1.0")
+        self._publicar("cambios para la 0.2.0")
+        self._tag("0.2.0")
+        # `estado` es quien hace el fetch con --tags; después se lee del clon local.
+        self.assertEqual(upgrade.estado(self.trabajo)["ultima_version"], "0.2.0")
+        self.assertEqual(upgrade.ultima_version(self.trabajo), "0.2.0")
+
+    def test_un_commit_sin_tag_no_es_version_publicada(self) -> None:
+        self._publicar("commit que nadie tageó")
+        self.assertIsNone(upgrade.estado(self.trabajo)["ultima_version"])
+
+    def test_check_avisa_por_version_y_no_solo_por_commits(self) -> None:
+        from unittest import mock
+
+        self._tag("0.1.0")
+        with mock.patch.object(upgrade, "version_instalada", return_value="0.1.0"):
+            self.assertEqual(upgrade.main(check=True, repo=self.trabajo, reindexar=False),
+                             upgrade.EXIT_AL_DIA)
+        self._publicar("cambios para la 0.2.0")
+        self._tag("0.2.0")
+        with mock.patch.object(upgrade, "version_instalada", return_value="0.1.0"):
+            self.assertEqual(upgrade.main(check=True, repo=self.trabajo, reindexar=False),
+                             upgrade.EXIT_HAY_UPDATE)
+
+    def test_version_instalada_mas_nueva_que_el_tag_no_alerta(self) -> None:
+        from unittest import mock
+
+        self._tag("0.1.0")
+        with mock.patch.object(upgrade, "version_instalada", return_value="0.2.0"):
+            self.assertEqual(upgrade.main(check=True, repo=self.trabajo, reindexar=False),
+                             upgrade.EXIT_AL_DIA)
+
     def test_como_funciona_no_falla(self) -> None:
         self.assertEqual(upgrade.main(how=True), 0)
 

@@ -154,6 +154,32 @@ obsn upgrade --how     # qué hace, paso a paso
 Se niega a seguir si el árbol está sucio y nunca crea un merge commit. Si la instalación no
 es editable (no hay `.git` al lado del paquete), te manda a `pip install -U`.
 
+## Versiones
+
+El paquete sigue [SemVer](https://semver.org/lang/es/) y el historial está en
+[CHANGELOG.md](CHANGELOG.md), con el formato de Keep a Changelog. Mientras estemos en 0.x, un
+cambio de esquema del índice o del ranking sube la minor, porque obliga a reconstruir; un fix
+sube la patch.
+
+```bash
+obsn --version          # 0.2.0
+obsn upgrade --check    # 0 al día · 10 hay actualización · 1 error
+```
+
+`--check` mira los commits nuevos y el último tag publicado, así que un commit suelto no
+cuenta como versión.
+
+Para cortar una versión está `scripts/release.sh`:
+
+```bash
+scripts/release.sh --check      # valida main limpio, el gate y qué se publicaría
+scripts/release.sh 0.3.0        # bump, changelog, tag, push y release en GitHub
+```
+
+Corre el gate completo antes de tocar nada, mueve lo que está en `[Unreleased]` a la versión
+nueva con la fecha, crea el tag anotado y el release, y reinstala el paquete editable para que
+`obsn --version` lo refleje. Si `[Unreleased]` está vacío, se niega: no hay nada que publicar.
+
 ## Para agentes
 
 `skills/obsidian-rag/SKILL.md` es una skill con frontmatter YAML y protocolo: cuándo usar

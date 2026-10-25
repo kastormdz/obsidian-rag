@@ -155,6 +155,33 @@ obsn upgrade --how     # what it does, step by step
 It refuses to run on a dirty tree and never creates a merge commit. If the install is not
 editable (no `.git` next to the package), it points you at `pip install -U`.
 
+## Versions
+
+The package follows [SemVer](https://semver.org) and the history lives in
+[CHANGELOG.md](CHANGELOG.md), in Keep a Changelog format. While we are on 0.x, a change to the
+index schema or the ranking bumps the minor, because it forces a rebuild; a fix bumps the
+patch.
+
+```bash
+obsn --version          # 0.2.0
+obsn upgrade --check    # 0 up to date · 10 update available · 1 error
+```
+
+`--check` looks at new commits and at the last published tag, so a loose commit does not count
+as a version.
+
+Releases are cut with `scripts/release.sh`:
+
+```bash
+scripts/release.sh --check      # validates clean main, the gate and what would ship
+scripts/release.sh 0.3.0        # bump, changelog, tag, push and GitHub release
+```
+
+It runs the full gate before touching anything, moves whatever is under `[Unreleased]` into the
+new version with today's date, creates the annotated tag and the release, and reinstalls the
+editable package so `obsn --version` reflects it. If `[Unreleased]` is empty it refuses: there
+is nothing to ship.
+
 ## For agents
 
 `skills/obsidian-rag/SKILL.md` is a skill with YAML frontmatter and a protocol: when to use

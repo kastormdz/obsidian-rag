@@ -13,6 +13,7 @@ Salidas:
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -54,6 +55,26 @@ def _git(args: list[str], cwd: Path, timeout: int = 120) -> subprocess.Completed
     )
 
 
+def _ver(texto: str) -> tuple[int, int, int]:
+    """(mayor, menor, patch) de algo como 'v0.2.0'. Sin `packaging`: no vale una dependencia."""
+    numeros = [int(n) for n in re.findall(r"\d+", texto)[:3]]
+    while len(numeros) < 3:
+        numeros.append(0)
+    return numeros[0], numeros[1], numeros[2]
+
+
+def ultima_version(repo: Path) -> str | None:
+    """Versión más alta publicada como tag que alcanza origin/main, sin la `v`."""
+    salida = _git(["tag", "--list", "v*", "--merged", "origin/main", "--sort=-v:refname"], repo)
+    if salida.returncode != 0:
+        return None
+    for linea in salida.stdout.splitlines():
+        tag = linea.strip()
+        if re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+            return tag[1:]
+    return None
+
+
 def estado(repo: Path, fetch: bool = True) -> dict[str, Any]:
     """Estado del repo frente a su remoto. No modifica nada."""
     datos: dict[str, Any] = {"repo": str(repo), "version": version_instalada()}
@@ -71,9 +92,12 @@ def estado(repo: Path, fetch: bool = True) -> dict[str, Any]:
     upstream = f"origin/{datos['rama']}"
     datos["upstream"] = upstream
     if fetch:
-        traido = _git(["fetch", "--quiet", "--prune", "origin"], repo)
+        traido = _git(["fetch", "--quiet", "--prune", "--tags", "origin"], repo)
         if traido.returncode != 0:
             raise RuntimeError(f"git fetch falló: {traido.stderr.strip()[:300]}")
+
+    # Los tags cuentan: un commit sin tag no es una versión publicada.
+    datos["ultima_version"] = ultima_version(repo)
 
     existe = _git(["rev-parse", "--verify", "--quiet", upstream], repo)
     if existe.returncode != 0:
@@ -124,6 +148,9 @@ def main(check: bool = False, how: bool = False, reindexar: bool = True,
             "4. Si cambió pyproject.toml, reinstala en el intérprete que corre obsn.\n"
             "5. Reindexa: incremental si no cambió nada estructural; si cambió el chunker o el\n"
             "   modelo, el índice se reconstruye solo (lo decide meta.chunker/meta.modelo).\n\n"
+            "`--check` mira dos cosas: los commits nuevos en el remoto y el último tag de\n"
+            "versión (vX.Y.Z) que alcanza origin/main. Un commit sin tag no cuenta como\n"
+            "versión publicada.\n\n"
             "Códigos de salida de --check: 0 = al día, 10 = hay actualización, 1 = error."
         )
         return 0
@@ -144,12 +171,19 @@ def main(check: bool = False, how: bool = False, reindexar: bool = True,
         return EXIT_ERROR
 
     marca = f"{est['rama']} @ {est['head']}  ·  versión {est['version']}"
+    publicada = est.get("ultima_version")
+    cola = f" · última publicada {publicada}" if publicada else " · sin versiones publicadas"
+    hay_version = bool(publicada) and _ver(str(publicada)) > _ver(est["version"])
     if check:
-        if est["atras"] == 0:
-            print(f"al día: {marca}")
+        if est["atras"] == 0 and not hay_version:
+            print(f"al día: {marca}{cola}")
             return EXIT_AL_DIA
-        print(f"hay actualización: {marca} -> {est['upstream']} @ {est['remoto']}"
-              f"  ({est['atras']} commit{'s' if est['atras'] != 1 else ''})")
+        motivos = []
+        if hay_version:
+            motivos.append(f"hay versión {publicada}")
+        if est["atras"]:
+            motivos.append(f"{est['atras']} commit{'s' if est['atras'] != 1 else ''} nuevos")
+        print(f"hay actualización: {marca}{cola} -> {', '.join(motivos)}")
         for linea in _commit_log(repo, est["head"], est["upstream"]):
             print(f"  {linea}")
         return EXIT_HAY_UPDATE
