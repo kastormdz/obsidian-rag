@@ -14,6 +14,9 @@ cd "$REPO"
 CHANGELOG="$REPO/CHANGELOG.md"
 PYPROJECT="$REPO/pyproject.toml"
 
+# Sin agente SSH: el repo usa llave propia y esto también puede correr sin terminal.
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o IdentityAgent=none -o BatchMode=yes}"
+
 rojo() { printf '\033[31m%s\033[0m\n' "$*" >&2; }
 verde() { printf '\033[32m%s\033[0m\n' "$*"; }
 die() { rojo "release: $*"; exit 1; }
