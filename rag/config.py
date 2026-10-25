@@ -27,9 +27,3 @@ EMBEDDINGS_CACHE = Path(
 )
 
 MODELO = os.environ.get("OBS_RAG_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
-
-
-def preparar() -> None:
-    """Crea los directorios que hagan falta (idempotente)."""
-    DB.parent.mkdir(parents=True, exist_ok=True)
-    EMBEDDINGS_CACHE.mkdir(parents=True, exist_ok=True)

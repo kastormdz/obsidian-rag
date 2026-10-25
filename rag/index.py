@@ -20,7 +20,6 @@ USO
     obsn rag "consulta"     # búsqueda semántica
 """
 import hashlib
-import json
 import os
 import re
 import sqlite3
@@ -138,24 +137,17 @@ def _ensure_columns(c: sqlite3.Connection) -> None:
     c.commit()
 
 
-# La migración de la cache histórica (`~/.hermes/cache/obsidian-embeddings.db`, formato
-# del cliente MCP viejo) se ELIMINÓ el 2026-10-24. No era sólo código muerto: la clave
-# de caché ahora incluye el modelo, así que esos vectores no se podían reusar, y como
-# la migración corría cada vez que `emb` estaba vacía, re-inyectaba 4.400 filas
-# inservibles (con `modelo` NULL) que después había que purgar de nuevo. El código que
-# la usaba desapareció con el stack viejo; si alguna vez hace falta reimportar algo,
-# va como script de un solo uso, no en el camino caliente de `conn()`.
+# La migración de la caché histórica del cliente viejo se eliminó: re-inyectaba vectores
+# inservibles (clave sin modelo) en cada corrida. Ver docs/AUDIT-2026-10-24.md.
 
 
-# ── Chunking (mismo criterio que el cliente: headings, fences, tablas) ───────
+# ── Chunking (headings, fences, tablas) ─────────────────────────────────────
 def chunk(content: str, min_chars: int = 120, max_chars: int = 1200) -> list[dict[str, Any]]:
     """Divide en chunks respetando estructura markdown. Devuelve lista de dicts.
 
-    Un bloque de tabla (header + separador + filas) y un bloque de lista (bullets
-    consecutivos) son UN chunk, no una fila por chunk. Con un chunk por línea, el
-    vault real quedaba en 19.007 micro-trozos de ~8 tokens, y la normalización por
-    densidad (tf = apariciones / tokens) hacía que una fila de tabla le ganara a la
-    sección que explica el tema. Un bloque se corta sólo si supera `max_chars`.
+    Un bloque de tabla o de lista es UN chunk, no una fila por chunk: con trozos de ~8
+    tokens, `tf = apariciones / tokens` hacía que una fila le ganara a la sección que
+    explica el tema. Un bloque se corta sólo si supera `max_chars`.
     """
     if not content or len(content.strip()) < 20:
         return []
@@ -168,11 +160,9 @@ def chunk(content: str, min_chars: int = 120, max_chars: int = 1200) -> list[dic
     def flush(final: bool = False) -> None:
         nonlocal buf, heading, hlevel, ctype
         text = "\n".join(buf).strip()
-        # min_chars es un piso de calidad, NO un filtro: una sección corta pero
-        # densa ("## Backup → /srv/...") es exactamente lo que se busca. Si se
-        # descarta, el término queda invisible y el RAG devuelve notas ajenas
-        # con confianza falsa. Medido 2026-09-29: el token de una nota de prueba
-        # vivía en un chunk de 100 chars y el RAG no la encontraba NUNCA.
+        # min_chars es un piso de calidad, NO un filtro: una sección corta pero densa
+        # ("## Backup → /srv/...") es exactamente lo que se busca. Descartarla deja el
+        # término invisible y el RAG responde otra cosa con confianza falsa.
         if text:
             if len(text) < min_chars and out and ctype == "prose":
                 # Bloque corto de prosa: se FUSIONA con el anterior en vez de
@@ -250,11 +240,9 @@ def embedder():
         from fastembed import TextEmbedding
         return TextEmbedding(
             model_name=MODELO,
-            # cache_dir EXPLICITO. Sin esto fastembed usa su default
-            # (fastembed/common/utils.py: tempfile.gettempdir()/fastembed_cache) y en Hermes
-            # TMPDIR apuntaba a una caché temporal que un pruner barre a
-            # las 24h y duplicaba el cache vivo del RAG. Medido 2026-10-17: 305 MB duplicados
-            # byte a byte contra la caché del modelo.
+            # cache_dir EXPLICITO: el default de fastembed es
+            # `tempfile.gettempdir()/fastembed_cache`, que un pruner puede barrer (y
+            # duplicaba 305 MB del modelo). Ver docs/AUDIT-2026-10-24.md.
             cache_dir=os.path.expanduser(
                 os.environ.get("FASTEMBED_CACHE_PATH", str(EMBEDDINGS_CACHE))
             ),
@@ -262,10 +250,6 @@ def embedder():
     except Exception as exc:  # pragma: no cover
         print(f"[warn] fastembed no disponible ({exc}); RAG degradará a TF-IDF", file=sys.stderr)
         return None
-
-
-def _hash(t: str) -> str:
-    return hashlib.sha1(t.encode("utf-8", "replace")).hexdigest()
 
 
 def _hash_emb(t: str) -> str:
@@ -294,17 +278,6 @@ def _fila_postings(texto: str, metadatos: str) -> list[tuple[str, int, int]]:
         cuenta[t] = cuenta.get(t, 0) + 1
     en_meta = set(tok(metadatos))
     return [(t, n, 1 if t in en_meta else 0) for t, n in cuenta.items()]
-
-
-def _postings_de_nota(c: sqlite3.Connection, path: str, chunks: list[dict], ids: list[int]) -> None:
-    filas = []
-    for ch, cid in zip(chunks, ids):
-        filas.extend((t, cid, n, im)
-                     for t, n, im in _fila_postings(ch["text"], f"{path} {ch['heading'] or ''}"))
-    if filas:
-        c.executemany(
-            "INSERT OR REPLACE INTO postings (term, chunk, n, in_meta) VALUES (?,?,?,?)", filas
-        )
 
 
 def _poblar_postings(c: sqlite3.Connection) -> None:
@@ -443,12 +416,8 @@ def build(force: bool = False) -> None:
             failed.append(path)
             continue
         mt = float(n.get("mtime") or 0.0)
-        # El HASH DEL CONTENIDO es la única señal fiable de "cambió".
-        # mtime solo: la cache de metadata del server tiene TTL y puede venir
-        # vieja → el write nuevo pasa inadvertido. size solo: una edición que
-        # mantiene el largo (un caracter por otro) pasa inadvertida igual.
-        # Medido 2026-09-29: una nota recién escrita con el MISMO largo no
-        # reindexaba y el RAG seguía sin encontrarla.
+        # El HASH del contenido es la única señal fiable de "cambió": el mtime puede venir
+        # viejo por la caché del server y una edición del mismo largo no cambia el size.
         ch = hashlib.sha1(body.encode("utf-8", "replace")).hexdigest()
         prev = c.execute("SELECT size, mtime, hash FROM notes WHERE path=?", (path,)).fetchone()
         if prev and not force and len(prev) > 2 and prev[2] == ch:
@@ -458,11 +427,8 @@ def build(force: bool = False) -> None:
 
     print(f"[build] vault={len(notes)}  sin cambios={same}  a reindexar={len(changed)}  fallidas={len(failed)}", flush=True)
 
-    # PURGAR lo que ya no está en el vault. Sin esto el índice solo crece: una
-    # nota borrada por MCP queda en el índice para siempre y el RAG puede
-    # devolver un path que no existe — el peor modo de falla para un consumidor
-    # que después va a read_note() y recibe "Note not found".
-    # Medido 2026-09-29: 7 notas de prueba borradas seguían en el índice.
+    # PURGAR lo que ya no está en el vault: si no, el índice sólo crece y el RAG puede
+    # devolver un path que no existe (el peor modo de falla para quien va a leerlo).
     server_paths = {n["name"] for n in notes}
     stale = [r[0] for r in c.execute("SELECT path FROM notes") if r[0] not in server_paths]
     if stale:
@@ -482,14 +448,11 @@ def build(force: bool = False) -> None:
             c.executemany("DELETE FROM postings WHERE chunk=?", [(i2,) for i2 in ids_viejos])
         c.execute("DELETE FROM chunks WHERE path=?", (path,))
         chunks = chunk(body)
-        # El texto embebido incluye path + heading: sin el nombre de la nota,
-        # un chunk como "Primer deploy" no tiene ningún contexto semántico y se
-        # vuelve indistinguible de miles. Medido 2026-09-29: incluir el path
-        # devolvió al top las notas correctas de CouchDB.
+        # Path + heading en el texto embebido: sin el nombre de la nota, un chunk como
+        # "Primer deploy" es indistinguible de miles.
         vecs = (embed_all([f"{path} :: {ch['heading'] or ''} :: {ch['text']}" for ch in chunks], c)
                 if chunks else [])
-        # Los vectores se guardan NORMALIZADOS: así la búsqueda es un único matmul
-        # y no recalcula 5.000 normas por consulta.
+        # Vectores NORMALIZADOS: la búsqueda es un solo matmul, sin recalcular normas.
         import numpy as np
         empaquetados = []
         for v in vecs:
@@ -649,11 +612,9 @@ def search(query: str, k: int = 5, alpha: float = 0.6) -> list[dict]:
     lex_w = (sum(w.values()) / len(w)) if w else 1.0
     masa_total = sum(idf.get(t, 0.0) for t in key_set) or 1.0
 
-    # ── Señal léxica: índice invertido. Nada de tokenizar el vault por consulta.
-    # Se consultan TODOS los términos de la consulta, stopwords incluidas: se probó
-    # filtrarlas (2026-10-24) y, aunque hace la cobertura "honesta", cuesta recall al
-    # mismo umbral (POS 3/5/1 -> 2/3/3 con cobertura por nota). La latencia ya la gana
-    # la fase léxica, no este filtro.
+    # ── Señal léxica: índice invertido, sin tokenizar el vault por consulta.
+    # Se consultan TODOS los términos, stopwords incluidas: filtrarlas cuesta recall al
+    # mismo umbral (POS 3/5/1 -> 2/3/3). Ver docs/AUDIT-2026-10-24.md.
     marcas = ",".join("?" * len(qset))
     por_chunk: dict[int, dict[str, float]] = {}
     for term, cid, n, im in c.execute(
@@ -679,10 +640,8 @@ def search(query: str, k: int = 5, alpha: float = 0.6) -> list[dict]:
                 for p, ts in nota_terms.items()}
 
     # ── Fase 1: ¿la evidencia léxica ya alcanza? Sin vectores y sin numpy.
-    # La mayoría de las consultas reales nombran algo que está en el texto. En ese caso
-    # traer 11 MB de vectores y hacer el matmul es trabajo que se descarta: se responde
-    # sólo con el índice invertido. Medido: 29 ms -> ~4 ms por búsqueda, y el CLI no
-    # paga los ~77 ms de importar numpy.
+    # La mayoría de las consultas nombra algo que está en el texto: traer 11 MB de
+    # vectores para descartarlos es trabajo al pedo. Medido: 29 ms -> ~4 ms.
     ganadoras = {p for p, cob in nota_cob.items() if cob >= _COBERTURA_FUERTE}
     if ganadoras:
         marcas_path = ",".join("?" * len(ganadoras))
@@ -804,35 +763,25 @@ def search(query: str, k: int = 5, alpha: float = 0.6) -> list[dict]:
 
 _MODEL_HOLDER = [None]
 
-# Cobertura léxica por masa IDF. `_PESO_COBERTURA` la suma al score (no reemplaza
-# al coseno): así un chunk que contiene los términos de la consulta se ordena mejor
-# sin anular la señal semántica. `_COBERTURA_FUERTE` es el umbral para considerarlo
-# respuesta directa (cubre casi todo lo específico de lo que se preguntó).
+# Cobertura léxica por masa IDF: se SUMA al score (no reemplaza al coseno), así un
+# chunk con los términos de la consulta ordena mejor sin anular la señal semántica.
+# `_COBERTURA_FUERTE` marca cuándo la evidencia léxica alcanza como respuesta directa.
 _PESO_COBERTURA = 0.35
 _COBERTURA_FUERTE = 0.7
 
-# Piso de relevancia del camino PURO SEMÁNTICO (sin ninguna palabra de la consulta
-# en el chunk). La métrica es el COSENO CRUDO, no el score combinado: cuando no hay
-# match léxico `lex = 0`, así que `score = 0.4 * coseno` y jamás podría llegar a
-# 0.62 — comparar el score acá sería una puerta cerrada.
-#
-# Calibrado 2026-10-24 contra el vault real (196 notas, 21.592 chunks), 10
-# paráfrasis con nota esperada vs 8 consultas fuera de dominio:
-#   positivas   coseno 0.486 – 0.738   (top-1 correcto sólo 3/10 antes de arreglar
-#                                       el ranking léxico)
-#   negativas   coseno 0.309 – 0.598
-# El coseno NO separa los grupos: hay negativas por encima de positivas. Por eso el
-# trabajo de precisión lo hace la cobertura IDF de arriba, y este piso queda como
-# último recurso para no devolver ruido cuando no hay ninguna evidencia léxica.
-# Si el ranking vuelve a devolver basura, recalibrar acá con números, no a ojo.
+# Piso del camino PURO SEMÁNTICO (sin ninguna palabra de la consulta en el chunk). Se
+# compara contra el COSENO CRUDO, no contra el score: sin match léxico `lex = 0`, así que
+# `score = 0.4 * coseno` nunca llegaría a 0.62 y la puerta quedaría cerrada.
+# El coseno no separa paráfrasis de ruido (medido: negativas hasta 0.598, positivas desde
+# 0.486); la precisión la hace la cobertura IDF y esto es el último recurso. Recalibrar
+# con números, no a ojo: docs/AUDIT-2026-10-24.md.
 _SEM_FLOOR = 0.62
 
 
 def _query_vector(query: str, c: sqlite3.Connection):
     """Vector de la consulta, desde la caché `emb` si ya se calculó alguna vez.
 
-    Cargar el modelo cuesta ~1,3 s y el vector se cachea por hash: mirar la caché
-    primero evita pagar el modelo para una consulta ya vista.
+    Cargar el modelo cuesta ~1,3 s: mirar la caché primero evita pagarlo de nuevo.
     """
     import numpy as np
     texto = f":: {query}"

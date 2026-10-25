@@ -32,11 +32,9 @@ from .config import DB as _CONFIG_DB
 DB = str(_CONFIG_DB)
 
 WIKILINK = re.compile(r"\[\[([^\]|#]+)")
-# Cosas que PARECEN wikilinks pero no lo son (sintaxis de Obsidian o código).
-# Sin este filtro, [[name: '*/main']] de un bloque YAML cuenta como link roto
-# y el reporte miente sobre la salud del grafo.
-# `[[:space:]]` es una clase de caracteres POSIX: aparece en comandos sed/grep
-# embebidos y NO es un wikilink. Detectado 2026-09-29 al auditar un vault real.
+# Cosas que PARECEN wikilinks y no lo son: sintaxis YAML (`[[name: '*/main']]`) o clases
+# POSIX dentro de comandos (`[[:space:]]`). Sin este filtro el reporte de links rotos
+# miente sobre la salud del grafo.
 FALSE_POSITIVE = re.compile(
     r"^(https?|ftp)://|^name:\s|^url:\s|^note$|^link$|^\*|^//|^\["
     r"|^\[:?\w+:\]|^\d+$|^-$"

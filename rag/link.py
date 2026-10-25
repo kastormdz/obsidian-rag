@@ -184,12 +184,6 @@ def score_de_canonicidad(p: str, cur: dict) -> float:
     return entrantes - derivado * 1.5 - largo
 
 
-def fmt_paths(ps: list[str], n: int = 6) -> str:
-    ps = ps[:n]
-    s = "\n".join(f"      {p}" for p in ps)
-    return s + (f"\n      … y {len(ps)-n} más" if len(ps) > n else "")
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description="Propone y aplica wikilinks por similitud (RAG)")
     ap.add_argument("--neighbors", metavar="TEMA", help="vecinas de un tema")
@@ -255,10 +249,8 @@ def main() -> None:
         print("\n  (espejo nada. Usá --apply para escribir)")
         return
 
-    # ── aplicar ──
-    # Antes esto hacía `import obsc` y llamaba al cliente MCP del stack viejo, que se
-    # borró: `obsn link --apply` moría con ModuleNotFoundError. Ahora va directo al
-    # filesystem, con las mismas garantías (path confinado + escritura atómica).
+    # ── aplicar ── va directo al filesystem, con las mismas garantías que el resto:
+    # path confinado y escritura atómica.
     from .vault import edit_note, read_note
 
     tocadas = 0
@@ -270,10 +262,8 @@ def main() -> None:
         except Exception as e:
             print(f"  ! no pude leer {p}: {e}")
             continue
-        # Si ya tiene la sección, agregar OTRA igual la duplica. El código
-        # anterior tenía un `pass` acá (no un `continue`), así que re-aplicar
-        # sobre una nota ya procesada escribía "## 🔗 Notas relacionadas" dos
-        # veces. Verificado 2026-09-29: 3 notas quedaron con la sección duplicada.
+        # Si ya tiene la sección, agregarla otra vez la duplica: hay que saltear la nota,
+        # no seguir de largo.
         if not isinstance(body, str):
             print(f"  ! respuesta inesperada en {p}")
             continue

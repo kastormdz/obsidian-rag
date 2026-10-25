@@ -23,7 +23,6 @@ from typing import Any, Iterable
 from .config import VAULT  # una sola fuente de la ruta del vault
 
 EXCLUIDAS = {".obsidian", ".trash", ".git", ".stfolder", ".DS_Store"}
-SECRETOS = Path("03-Personal") / "Secrets"
 
 
 class FueraDelVault(Exception):
@@ -68,10 +67,6 @@ def _dentro(destino: Path, pedido: str) -> Path:
     if not resuelto.is_relative_to(raiz):
         raise FueraDelVault(f"fuera del vault: {pedido!r}")
     return resuelto
-
-
-def _es_nota(destino: Path) -> bool:
-    return destino.suffix.lower() == ".md" and not any(p in EXCLUIDAS for p in destino.parts)
 
 
 def _recorrer() -> Iterable[Path]:
