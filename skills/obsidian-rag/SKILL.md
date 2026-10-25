@@ -53,7 +53,7 @@ intérprete**. `python3` del sistema puede no ser el mismo que el del venv.
 | `obsn status` | notas, chunks y ruta del índice |
 | `obsn upgrade [--check]` | actualiza el paquete desde su repo y reindexa si hace falta (`--check`: 0 al día, 10 hay update) |
 | `obsn read "ruta.md"` | contenido completo |
-| `obsn write "ruta.md" --file x.md` | crear/sobrescribir (atómico). También por stdin |
+| `obsn write "ruta.md" --file x.md` | crear/sobrescribir (atómico). También por stdin. Reindexa en segundo plano (`--no-reindex` lo apaga) |
 | `obsn edit "ruta.md" append --file x.md` | `append` / `prepend` / `replace` |
 | `obsn delete "ruta.md"` | a `.trash/` (reversible). `--hard --yes` borra de verdad |
 | `obsn move "a.md" "b.md"` | mover o renombrar (no pisa) |
@@ -75,8 +75,11 @@ adaptar nada.
    relativo al vault: sirve tal cual para `obsn read`.
 3. **Si `rag` devuelve vacío**, no concluyas que no existe. En este orden:
    `obsn status` (¿índice vacío o incompleto?) → `obsn reindex` → `obsn search`.
-4. **Después de escribir o editar**, corré `obsn reindex` para que el RAG lo vea.
-   (Si hay un timer de systemd, igual conviene forzarlo en la misma sesión.)
+4. **Después de escribir o editar, el índice se actualiza solo.** El CLI lanza un
+   reindexado en segundo plano (debounce ~1,5 s, con coalescencia: cinco escrituras
+   seguidas producen un solo reindex) y devuelve en ~60 ms. Si necesitás la nota en el
+   índice **ahora**, corré `obsn reindex`; si sólo necesitás encontrarla ya, `obsn search`
+   lee el disco y no depende del índice.
 5. **Antes de crear una nota**, buscá la canónica: `obsn rag "<tema>" 3` +
    `obsn search "<nombre>"`. Si ya existe una nota del mismo sujeto, agregale una sección
    en vez de crear una nota paralela.
@@ -161,6 +164,7 @@ guarda con qué modelo se construyó, y la caché `emb` está particionada por m
 | La búsqueda trae resultados que no tienen nada que ver | la consulta es demasiado genérica (`"docker"`, `"servidor"`) | agregá un término específico; `rag` compara contra todo el vault |
 | `reindex` sale con código 1 y "N sin indexar" | notas ilegibles o fuera del índice | mirar la lista que imprime; revisar permisos de esos archivos |
 | `obsn rag` tarda ~2 s cada vez | la consulta no está cacheada: carga el modelo (~1,3 s) | normal; repetir la misma consulta baja a ~180 ms |
+| `rag` devuelve vacío en 0 ms y `status` muestra un vault raro | quedaron `OBS_RAG_VAULT`/`OBS_RAG_INDEX` exportados de una prueba | `unset` de esas variables, o usá `env VAR=... obsn ...` por comando |
 | `error: fuera del vault` (exit 2) | path con `..`, absoluto o symlink que apunta afuera | usar siempre rutas relativas al vault |
 
 ## Seguridad

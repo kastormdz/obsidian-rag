@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 VERBOSE = "-v" in sys.argv or "--verbose" in sys.argv
@@ -62,6 +63,9 @@ def main() -> int:
         "OBS_RAG_VAULT": str(vault),
         "OBS_RAG_INDEX": str(tmp / "index.db"),
         "OBS_RAG_CACHE": os.environ.get("OBS_RAG_CACHE", str(Path.home() / ".cache/fastembed")),
+        # El resto del E2E reindexa a mano: el worker async se prueba aparte (paso 11).
+        "OBS_RAG_NO_ASYNC": "1",
+        "OBS_RAG_DEBOUNCE": "0.2",
     }
     OBSN = shutil.which("obsn") or str(Path.home() / ".local/bin/obsn")
     print(f"vault temporal: {vault}\nobsn: {OBSN}\n")
@@ -159,7 +163,26 @@ def main() -> int:
         check("upgrade --check responde (al día / hay update)",
               p.returncode in (0, 10) or sin_red, f"rc={p.returncode} {p.stderr[:150]}")
 
-        # 11) el vault real no se tocó
+        # 11) reindex en segundo plano: el write no espera y la nota aparece sola
+        env_async = {k: v for k, v in ENV.items() if k != "OBS_RAG_NO_ASYNC"}
+        t0 = time.perf_counter()
+        p = correr("write", "02-docs/async.md",
+                   stdin="# Async\n\nProtocolo zumbido-4455 con despliegue automático.\n",
+                   env=env_async)
+        ms_write = (time.perf_counter() - t0) * 1000
+        check("write dispara el reindex async y vuelve rápido",
+              p.returncode == 0 and ms_write < 900, f"{ms_write:.0f} ms")
+        encontrado = False
+        for _ in range(24):          # hasta ~12 s
+            time.sleep(0.5)
+            r = correr("rag", "zumbido-4455", "3", env=env_async)
+            if "async.md" in r.stdout:
+                encontrado = True
+                break
+        check("el worker en segundo plano indexa la nota solo", encontrado,
+              "no apareció en el índice tras 12 s")
+
+        # 12) el vault real no se tocó
         real = Path.home() / "Obsidian"
         check("el vault real sigue existiendo", not (str(real) in ENV["OBS_RAG_VAULT"]), ENV["OBS_RAG_VAULT"])
     finally:

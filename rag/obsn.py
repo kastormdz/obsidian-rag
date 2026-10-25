@@ -27,10 +27,35 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 from typing import Any, Sequence
 
 from . import vault
+
+
+def _encolar_reindex() -> None:
+    """Dispara un reindexado en segundo plano y sigue.
+
+    fork+exec de un worker que hace debounce y coalescencia (ver rag/reindex_worker.py):
+    el usuario no paga los ~1,5 s de cargar el modelo. Se apaga con `--no-reindex` o
+    con `OBS_RAG_NO_ASYNC=1` (scripts que escriben en lote y reindexan una sola vez).
+    Si no se puede lanzar, no es un error: el timer lo agarra igual.
+    """
+    if os.environ.get("OBS_RAG_NO_ASYNC"):
+        return
+    try:
+        subprocess.Popen(
+            [sys.executable, "-m", "rag.reindex_worker"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,       # que no lo mate el Ctrl-C de la terminal
+            close_fds=True,
+        )
+    except OSError:
+        pass
 
 
 # --------------------------------------------------------------------- formato
@@ -162,6 +187,8 @@ def cmd_read(args: argparse.Namespace) -> None:
 
 def cmd_write(args: argparse.Namespace) -> None:
     print(vault.write_note(args.path, _pedir_contenido(args)))
+    if not args.no_reindex:
+        _encolar_reindex()
 
 
 def cmd_edit(args: argparse.Namespace) -> None:
@@ -173,6 +200,8 @@ def cmd_edit(args: argparse.Namespace) -> None:
         print(vault.edit_note(args.path, "replace-old-new", contenido))
     else:
         print(vault.edit_note(args.path, args.op, contenido))
+    if not args.no_reindex:
+        _encolar_reindex()
 
 
 def cmd_delete(args: argparse.Namespace) -> None:
@@ -180,10 +209,14 @@ def cmd_delete(args: argparse.Namespace) -> None:
         print("cancelado")
         return
     print(vault.delete_note(args.path, hard=args.hard))
+    if not args.no_reindex:
+        _encolar_reindex()
 
 
 def cmd_move(args: argparse.Namespace) -> None:
     print(vault.move_note(args.desde, args.hasta))
+    if not args.no_reindex:
+        _encolar_reindex()
 
 
 def cmd_list(args: argparse.Namespace) -> None:
@@ -267,6 +300,8 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("path")
     p.add_argument("content", nargs="?")
     p.add_argument("--file")
+    p.add_argument("--no-reindex", action="store_true",
+                   help="no reindexar en segundo plano después de escribir")
     p.set_defaults(func=cmd_write)
 
     p = sub.add_parser("edit", aliases=["edit_note"], help="append | prepend | replace")
@@ -275,17 +310,23 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("content", nargs="?")
     p.add_argument("old", nargs="?")
     p.add_argument("--file")
+    p.add_argument("--no-reindex", action="store_true",
+                   help="no reindexar en segundo plano después de editar")
     p.set_defaults(func=cmd_edit)
 
     p = sub.add_parser("delete", aliases=["delete_note"], help="borrar (a la papelera)")
     p.add_argument("path")
     p.add_argument("--hard", action="store_true", help="borrar de verdad (sin papelera)")
     p.add_argument("--yes", action="store_true")
+    p.add_argument("--no-reindex", action="store_true",
+                   help="no reindexar en segundo plano después de borrar")
     p.set_defaults(func=cmd_delete)
 
     p = sub.add_parser("move", aliases=["move_note"], help="mover o renombrar")
     p.add_argument("desde")
     p.add_argument("hasta")
+    p.add_argument("--no-reindex", action="store_true",
+                   help="no reindexar en segundo plano después de mover")
     p.set_defaults(func=cmd_move)
 
     p = sub.add_parser("list", aliases=["list_notes"], help="listar notas")

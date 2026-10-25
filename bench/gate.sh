@@ -10,6 +10,10 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
 PY="${PY:-}"
+# El gate mide SIEMPRE contra el índice real. Si el shell viene con OBS_RAG_VAULT /
+# OBS_RAG_INDEX exportados de una prueba, el banco correría contra un índice temporal
+# (o borrado) y daría todo vacío en 0 ms sin explicar por qué.
+unset OBS_RAG_VAULT OBS_RAG_INDEX OBS_RAG_DEBOUNCE OBS_RAG_NO_ASYNC
 if [ -z "$PY" ]; then
   if [ -x "$HOME/.hermes/hermes-agent/venv/bin/python" ]; then
     PY="$HOME/.hermes/hermes-agent/venv/bin/python"

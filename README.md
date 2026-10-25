@@ -27,7 +27,7 @@ obsn status                             # qué hay indexado
 obsn upgrade --check                    # ¿hay versión nueva? (0 al día, 10 hay update)
 
 obsn read  "02-docs/nota.md"            # leer
-obsn write "02-docs/nueva.md" --file ~/tmp/nota.md
+obsn write "02-docs/nueva.md" --file ~/tmp/nota.md   # reindexa solo en segundo plano
 obsn edit  "02-docs/nota.md" append --file ~/tmp/cola.md
 obsn delete "02-docs/vieja.md"          # a .trash (--hard para borrar de verdad)
 obsn move  "02-docs/a.md" "02-docs/b.md"

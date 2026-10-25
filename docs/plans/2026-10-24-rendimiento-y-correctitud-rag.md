@@ -264,7 +264,21 @@ cuesta ~240 ms y no urge; a 10.000+ notas sí.
 - Consumir la DB del server: paths HMAC + contenido E2E ⇒ inútil para indexar.
 - Depender de eventos como verdad: los eventos son pista, el hash es la verdad.
 
-**Estado:** Opción A es la que va; la B queda condicionada a `list-local --json`.
+**Estado: IMPLEMENTADO (2026-10-24) con una corrección de diseño.** El `PathModified=` de
+systemd **no es recursivo**: vigila el directorio que le nombrás, así que un path unit sobre la
+raíz del vault no ve los cambios en subcarpetas (donde vive casi todo). Generar una entrada por
+subdirectorio es frágil. Lo que se hizo:
+
+1. **Worker async después de escribir** (`rag/reindex_worker.py`): `write/edit/delete/move`
+   lanzan un reindexado en segundo plano con `fork+exec` detachado. Debounce (~1,5 s) para que
+   aterrice la ráfaga y **coalescencia por `flock`**: cinco escrituras seguidas producen un solo
+   reindex. Costo medido para el usuario: **57-62 ms por escritura, igual que sin el worker**.
+   Se apaga con `--no-reindex` o `OBS_RAG_NO_ASYNC=1`.
+2. **Timer de 2 minutos** (antes 15) como red de seguridad para las escrituras que no pasan por
+   `obsn` (Obsidian, sync de ovaultd). Costo: ~240 ms de CPU cada 2 min ≈ 0,2%.
+
+La ventana de ceguera del `rag` pasó de **≤15 min a ≤2 min**, y a ~2 s para lo que escribe el
+propio agente. `obsn search` sigue viendo el disco al instante.
 
 ### 5.6 — Checklist de exposición como MCP
 
