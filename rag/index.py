@@ -28,7 +28,7 @@ import sys
 import time
 from typing import Any, Optional
 
-from .config import DB as _CONFIG_DB, LEGACY_DB, MODELO, VAULT as _CONFIG_VAULT, EMBEDDINGS_CACHE
+from .config import DB as _CONFIG_DB, MODELO, VAULT as _CONFIG_VAULT, EMBEDDINGS_CACHE
 
 DB = str(_CONFIG_DB)
 # El vault vive descifrado en disco. El índice se construye desde el filesystem:
@@ -111,7 +111,6 @@ def conn() -> sqlite3.Connection:
     c = sqlite3.connect(DB, timeout=30)
     c.executescript(SCHEMA)
     _ensure_columns(c)
-    _migrate_legacy_embeddings(c)
     return c
 
 
@@ -139,34 +138,13 @@ def _ensure_columns(c: sqlite3.Connection) -> None:
     c.commit()
 
 
-_LEGACY_DB = str(LEGACY_DB)
-
-
-def _migrate_legacy_embeddings(c: sqlite3.Connection) -> None:
-    """Copiar la cache histórica de embeddings a la DB del índice (una vez).
-
-    La DB vieja tiene 4.400+ vectores ya calculados; recalcularlos cuesta
-    minutos. Solo corre si la tabla emb local está vacía.
-    """
-    try:
-        row = c.execute("SELECT COUNT(*) FROM emb").fetchone()
-        if row and row[0] > 0:
-            return
-        if not os.path.exists(_LEGACY_DB) or os.path.abspath(_LEGACY_DB) == os.path.abspath(DB):
-            return
-        src = sqlite3.connect(f"file:{_LEGACY_DB}?mode=ro", uri=True, timeout=10)
-        n = src.execute("SELECT COUNT(*) FROM emb").fetchone()[0]
-        if not n:
-            src.close()
-            return
-        c.execute("ATTACH DATABASE ? AS legacy", (_LEGACY_DB,))
-        c.execute("INSERT OR IGNORE INTO emb (h, dim, v) SELECT h, dim, v FROM legacy.emb")
-        c.commit()
-        c.execute("DETACH DATABASE legacy")
-        src.close()
-        print(f"[index] migrados {n} embeddings historicos desde obsidian-embeddings.db", flush=True)
-    except Exception as exc:
-        print(f"[index] no se migraron los embeddings historicos: {exc}", file=sys.stderr)
+# La migración de la cache histórica (`~/.hermes/cache/obsidian-embeddings.db`, formato
+# del cliente MCP viejo) se ELIMINÓ el 2026-10-24. No era sólo código muerto: la clave
+# de caché ahora incluye el modelo, así que esos vectores no se podían reusar, y como
+# la migración corría cada vez que `emb` estaba vacía, re-inyectaba 4.400 filas
+# inservibles (con `modelo` NULL) que después había que purgar de nuevo. El código que
+# la usaba desapareció con el stack viejo; si alguna vez hace falta reimportar algo,
+# va como script de un solo uso, no en el camino caliente de `conn()`.
 
 
 # ── Chunking (mismo criterio que el cliente: headings, fences, tablas) ───────
@@ -654,6 +632,19 @@ def search(query: str, k: int = 5, alpha: float = 0.6) -> list[dict]:
         if im:
             d["meta"] = 1
 
+    # Cobertura a nivel NOTA: una consulta cuyos términos caen en secciones distintas de
+    # la misma nota tiene que encontrar esa nota. Sin esto, "reindex embeddings" no
+    # devolvía la nota que documenta ambos conceptos por separado (medido 2026-10-24:
+    # cada chunk cubría la mitad de la consulta y ninguno llegaba al umbral).
+    nota_terms: dict[str, set[str]] = {}
+    for term, path in c.execute(
+        f"SELECT p.term, c.path FROM postings p JOIN chunks c ON c.id = p.chunk"
+        f" WHERE p.term IN ({marcas})", tuple(qset)
+    ):
+        nota_terms.setdefault(path, set()).add(term)
+    nota_cob = {p: sum(idf.get(t, 0.0) for t in ts) / masa_total
+                for p, ts in nota_terms.items()}
+
     # ── Señal semántica: un matmul, sin traer el texto de todo el vault
     qv = _query_vector(query, c)
     if qv is None:
@@ -723,14 +714,12 @@ def search(query: str, k: int = 5, alpha: float = 0.6) -> list[dict]:
             score += 0.10
         out.append({"path": path, "ord": o, "heading": h, "hlevel": hl,
                     "chunk_type": ct, "score": score, "sem": sem,
-                    "_cob": cobertura, "_id": cid})
+                    "_cob": cobertura, "_nota": nota_cob.get(path, 0.0), "_id": cid})
     out.sort(key=lambda x: -x["score"])
 
-    # 1) Evidencia léxica FUERTE (el chunk cubre casi todo lo específico de la
-    #    consulta): esos chunks son la respuesta. Se ordenan por score, que ya
-    #    incluye la cobertura — ordenar sólo por cobertura premiaba chunks que
-    #    repetían una palabra común en un texto irrelevante.
-    fuertes = [r for r in out if r["_cob"] >= _COBERTURA_FUERTE]
+    # 1) La NOTA cubre buena parte de lo específico de la consulta (aunque sea entre
+    #    varios chunks): sus chunks son la respuesta, ordenados por score.
+    fuertes = [r for r in out if r["_nota"] >= _COBERTURA_FUERTE]
     if fuertes:
         fuertes.sort(key=lambda r: -r["score"])
         elegidos = fuertes[:k]

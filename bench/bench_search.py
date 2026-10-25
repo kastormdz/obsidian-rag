@@ -16,6 +16,7 @@ cambio sube la latencia pero baja los aciertos, no entra.
 """
 from __future__ import annotations
 
+import json
 import statistics
 import sys
 import time
@@ -102,6 +103,11 @@ def main() -> int:
         ("NEG  (fuera de dominio)", medir("NEG", NEG, esperar_vacio=True, verbose=verbose)),
         ("EXACT (término exacto)", medir("EXACT", EXACT, verbose=verbose)),
     ]
+    # Salida para máquinas: el gate no puede parsear la tabla humana (los nombres de
+    # grupo tienen espacios y las columnas se corren).
+    if "--json" in sys.argv:
+        print(json.dumps({"pos": grupos[0][1], "neg": grupos[1][1], "exact": grupos[2][1]}))
+        return 0
     print(f"\n{'grupo':24s} {'n':>3s} {'top-1':>6s} {'top-5':>6s} {'vacíos':>7s} {'mediana':>9s} {'p95':>8s}")
     print("-" * 76)
     for nombre, m in grupos:

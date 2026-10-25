@@ -26,9 +26,6 @@ EMBEDDINGS_CACHE = Path(
     else _xdg("XDG_CACHE_HOME", ".cache") / "fastembed"
 )
 
-# Índice viejo (formato anterior): se migra una sola vez si existe.
-LEGACY_DB = DATA_DIR / "legacy-embeddings.db"
-
 MODELO = os.environ.get("OBS_RAG_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 
 

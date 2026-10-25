@@ -217,17 +217,35 @@ el estado en `meta` y que `obsn status` / `obsn rag` lo digan explícitamente.
 `list_notes` abre con totales, filtros activos y orden, y al truncar **nombra las carpetas
 omitidas con conteo**. Aplicar a `obsn list` y `obsn rag` (que hoy no dice si truncó).
 
-### 5.5 — Sincronización por `_changes` de CouchDB (event-driven)
+### 5.5 — Sincronización con ovaultd (event-driven)
 
-**Idea:** modo CouchDB con `_changes` (`live: true`), secuencia `since` persistida y catch-up
-incremental; descifrado E2E y rearmado de chunks vía `livesync-commonlib`.
+**Contexto real:** el vault vive en disco (`~/Obsidian`) y lo sincroniza **ovaultd** (plugin de
+Obsidian en el escritorio, o `ovaultd sync --continuous` headless). El server es **ciego**:
+guarda blobs cifrados y los paths son HMAC, así que el índice **no puede** ni debe alimentarse
+desde la DB del server — se alimenta del plaintext local, como hoy.
 
-**Por qué:** nuestro índice depende de un timer cada 15 min porque no sabe cuándo cambió el
-vault. Con `_changes` el reindex pasa a ser event-driven (0 s de latencia, 0 CPU en reposo).
-Equivalente nativo sin CouchDB: **systemd path unit** sobre el vault.
+Lo que cambia no es la fuente, es el **disparador**. Hoy: timer cada 15 min.
 
-**Estado:** evaluar. Requiere decidir si el índice se alimenta del filesystem o de CouchDB
-(hoy el diseño asume filesystem: *"no hay API que liste notas"*).
+**Opción A — systemd path unit (recomendada).** Un `PathChanged=` sobre el vault con
+`OnUnitActiveSec` de debounce (~2 s) dispara `obsn reindex` incremental. Requisito medido
+(ovaultd, pitfall 26): los renames externos llegan como `created`+`deleted`, los dotfiles y
+`.obsidian/` **no generan eventos**, y un create+rm en <300 ms puede perderse. Por eso el scan
+por **hash** sigue siendo la verdad y el timer queda como red de seguridad (p. ej. cada 1 h).
+
+**Opción B — hook después del sync headless.** Si el sync corre en un servicio, un wrapper con
+`OnSuccess=` llama `obsn reindex` tras cada pasada. Para saltear el walk haría falta que
+`ovaultd list-local` emita **JSON** (hoy imprime texto, sin `--json`): es un cambio chico en
+`packages/cli` y convierte el reindex en "aplicá esta lista de paths". A 7.550 chunks el walk
+cuesta ~240 ms y no urge; a 10.000+ notas sí.
+
+**Lo que NO se hace:**
+
+- Leer el **bridge local** del CLI (`127.0.0.1:18931`, `/fs/*`): no tiene auth (hallazgo F-02 de
+  la auditoría) y es una superficie interna, no un contrato.
+- Consumir la DB del server: paths HMAC + contenido E2E ⇒ inútil para indexar.
+- Depender de eventos como verdad: los eventos son pista, el hash es la verdad.
+
+**Estado:** Opción A es la que va; la B queda condicionada a `list-local --json`.
 
 ### 5.6 — Checklist de exposición como MCP
 
