@@ -26,6 +26,7 @@ import os
 import re
 import sys
 from collections import defaultdict
+from pathlib import Path
 
 from .config import DB as _CONFIG_DB
 
@@ -42,16 +43,23 @@ FALSE_POSITIVE = re.compile(
 
 
 def load_notes(db: str = DB) -> dict[str, str]:
-    """Reconstruir cada nota desde sus chunks (el índice tiene el texto completo)."""
-    import sqlite3
-    if not os.path.exists(db):
-        sys.exit(f"obs-graph: no existe el índice {db}. Corré: obsn reindex")
-    c = sqlite3.connect(db)
-    notes: dict[str, list[str]] = defaultdict(list)
-    for path, text in c.execute("SELECT path, text FROM chunks ORDER BY path, ord"):
-        notes[path].append(text)
-    c.close()
-    return {p: "\n".join(parts) for p, parts in notes.items()}
+    """Leer las notas del vault. El índice ya no guarda el texto en claro."""
+    from .config import VAULT
+    from .vault import EXCLUIDAS
+
+    raiz = Path(VAULT)
+    if not raiz.is_dir():
+        sys.exit(f"obs-graph: no existe el vault {raiz}")
+    notas: dict[str, str] = {}
+    for p in sorted(raiz.rglob("*.md")):
+        rel = p.relative_to(raiz)
+        if any(parte in EXCLUIDAS for parte in rel.parts):
+            continue
+        try:
+            notas[rel.as_posix()] = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+    return notas
 
 
 def basename(path: str) -> str:

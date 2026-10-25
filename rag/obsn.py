@@ -359,7 +359,16 @@ def construir_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = construir_parser().parse_args(argv)
+    ap = construir_parser()
+    # `graph` y `link` tienen su propio argparse: sus flags no están declarados acá, y con
+    # `REMAINDER` un `--stats` inicial lo rechaza el parser de arriba. Se aceptan los
+    # sobrantes y se pasan al módulo, que es quien valida.
+    args, sobrantes = ap.parse_known_args(argv)
+    if sobrantes:
+        if hasattr(args, "resto"):
+            args.resto = [*sobrantes, *args.resto]
+        else:
+            ap.error(f"argumentos no reconocidos: {' '.join(sobrantes)}")
     try:
         args.func(args)
     except vault.FueraDelVault as error:

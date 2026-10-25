@@ -209,17 +209,18 @@ Ese proyecto **no usa LLM ni embeddings**: su `search_notes` es substring sobre 
 (`ARCHITECTURE.md`: *"substring search, no inverted index"*; FlexSearch se sacó por memoria).
 Su valor no es la búsqueda, es la sincronización y el endurecimiento. Qué se adopta y qué no:
 
-### 5.1 — Índice sin texto en claro (seguridad + tamaño)
+### 5.1 — Índice sin texto en claro (seguridad + tamaño) — IMPLEMENTADO
 
 **Idea:** ellos mantienen el texto **solo en memoria** y nunca lo escriben a disco. Nuestro
-`chunks.text` es una copia del vault en claro (119 MB).
+`chunks.text` era una copia del vault en claro (119 MB).
 
-**Cambio:** quitar `text` de `chunks`; guardar `postings(term, chunk, n, in_meta)` + vectores.
-Al mostrar resultados, releer del disco las k notas ganadoras y extraer el chunk por
-`heading/ord`.
+**Cambio aplicado:** `chunks` guarda `off_start`/`off_end` (rango de líneas en la nota) en
+vez de `text`; los resultados se releen del vault al mostrarlos; `df` se deriva de
+`postings`; `graph` y `link` leen el vault en vez del índice.
 
-**Criterio:** `index.db` sin texto; `obsn rag` devuelve el mismo texto que hoy; el índice
-deja de ser sensible (solo rutas + vectores).
+**Resultado medido:** `index.db` 115 MB → 41 MB, y la frase del vault ya no aparece en la
+DB ni en el WAL. El texto que devuelve `obsn rag` es idéntico al de antes (test de
+round-trip del chunker).
 
 ### 5.2 — Cifrado del índice (solo si se conserva texto)
 

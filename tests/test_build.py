@@ -7,6 +7,7 @@ el commit de la nota 10 y sus chunks desaparecían del índice hasta el próximo
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sqlite3
 import tempfile
 import unittest
@@ -36,6 +37,11 @@ class BuildTransaccional(unittest.TestCase):
         # Sin modelo: el test es de transacciones, no de embeddings.
         idx.embed_all = lambda textos, c, model=None: [None] * len(textos)
         idx.build(force=True)
+        # Marcar el índice invertido como al día: si no, el segundo build corre la
+        # migración de postings y el fallo inyectado abajo saltaría fuera del savepoint.
+        with sqlite3.connect(idx.DB) as c:
+            idx._set_meta(c, "postings", idx.POSTINGS_VERSION)
+            c.commit()
 
     def tearDown(self) -> None:
         idx = self.idx
@@ -44,8 +50,13 @@ class BuildTransaccional(unittest.TestCase):
         self._dir.cleanup()
 
     def _chunks(self, path: str) -> list[str]:
+        """Reconstruye el texto de cada chunk desde el vault (el índice guarda offsets)."""
         with sqlite3.connect(self.idx.DB) as c:
-            return [r[0] for r in c.execute("SELECT text FROM chunks WHERE path=?", (path,))]
+            rangos = list(c.execute(
+                "SELECT off_start, off_end FROM chunks WHERE path=? ORDER BY ord", (path,)
+            ))
+        lineas = (self.vault / path).read_text(encoding="utf-8").split("\n")
+        return ["\n".join(lineas[a:b + 1]).strip() for a, b in rangos]
 
     def test_una_nota_que_falla_conserva_sus_chunks_y_no_frena_al_resto(self) -> None:
         (self.vault / "buena.md").write_text(
@@ -69,10 +80,16 @@ class BuildTransaccional(unittest.TestCase):
         finally:
             self.idx._fila_postings = original
 
-        # La que falló conserva EXACTAMENTE lo que tenía: el rollback deshace el DELETE.
-        viejos = self._chunks("mala.md")
-        self.assertTrue(viejos, "la nota que falló se quedó sin chunks")
-        self.assertFalse(any("EXPLOTA" in t for t in viejos), "quedó contenido a medias")
+        # La que falló conserva su fila y sus chunks: el rollback deshace el DELETE.
+        with sqlite3.connect(self.idx.DB) as c:
+            hash_mala = c.execute("SELECT hash FROM notes WHERE path='mala.md'").fetchone()[0]
+            n_mala = c.execute("SELECT COUNT(*) FROM chunks WHERE path='mala.md'").fetchone()[0]
+        nuevo_mala = hashlib.sha1(
+            (self.vault / "mala.md").read_text(encoding="utf-8").encode("utf-8")
+        ).hexdigest()
+        self.assertEqual(n_mala, 1, "la nota que falló se quedó sin chunks")
+        self.assertNotEqual(hash_mala, nuevo_mala,
+                            "el build fallido dejó la nota marcada como indexada")
         # La otra se indexó igual: un fallo no frena al resto.
         self.assertTrue(any("zanahoria" in t for t in self._chunks("buena.md")))
 
@@ -99,6 +116,30 @@ class ErroresDeCli(unittest.TestCase):
         args = argparse.Namespace(limit=-1, folder=None, tag=None, json=False)
         with self.assertRaises(SystemExit):
             obsn.cmd_list(args)
+
+    def test_graph_y_link_aceptan_sus_propios_flags(self) -> None:
+        # `--stats` no está declarado en el parser de obsn: lo valida graph.main(). Antes,
+        # `obsn graph --stats` moría con "unrecognized arguments".
+        import contextlib
+        import io
+
+        from rag import config, obsn
+
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"
+            vault.mkdir()
+            (vault / "uno.md").write_text("# Uno\n\nVease [[dos]].\n", encoding="utf-8")
+            (vault / "dos.md").write_text("# Dos\n\nNada que enlazar.\n", encoding="utf-8")
+            previo = config.VAULT
+            config.VAULT = vault
+            try:
+                salida = io.StringIO()
+                with contextlib.redirect_stdout(salida):
+                    rc = obsn.main(["graph", "--stats"])
+            finally:
+                config.VAULT = previo
+        self.assertEqual(rc, 0)
+        self.assertIn("notas=2", salida.getvalue())
 
 
 if __name__ == "__main__":

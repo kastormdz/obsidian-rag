@@ -56,7 +56,11 @@ CREATE TABLE IF NOT EXISTS chunks (
     heading TEXT,
     hlevel  INTEGER,
     ctype   TEXT,
-    text    TEXT,
+    -- Rango de líneas del chunk dentro de la nota (off_end INCLUSIVE). El texto NO se
+    -- guarda: se relee del vault al mostrar los resultados. Así el índice no es una
+    -- copia en claro del vault, sólo términos, offsets y vectores.
+    off_start INTEGER,
+    off_end   INTEGER,
     vec     BLOB,
     n_tok   INTEGER
 );
@@ -108,9 +112,34 @@ POSTINGS_VERSION = 1
 def conn() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB), exist_ok=True)
     c = sqlite3.connect(DB, timeout=30)
+    _migrar_sin_texto(c)
     c.executescript(SCHEMA)
     _ensure_columns(c)
     return c
+
+
+def _migrar_sin_texto(c: sqlite3.Connection) -> None:
+    """Descarta un índice del esquema viejo, que guardaba el vault en claro.
+
+    `off_start`/`off_end` no se pueden rellenar sin volver a trocear cada nota, así que
+    el índice se tira y se reconstruye. Los vectores de la caché `emb` sobreviven: el
+    reindex siguiente no vuelve a embeber nada.
+    """
+    try:
+        columnas = {r[1] for r in c.execute("PRAGMA table_info(chunks)")}
+    except sqlite3.OperationalError:
+        return
+    if "text" not in columnas:
+        return
+    for tabla in ("chunks", "postings", "df"):
+        c.execute(f"DROP TABLE IF EXISTS {tabla}")
+    try:
+        c.execute("DELETE FROM notes")
+    except sqlite3.OperationalError:
+        pass
+    c.commit()
+    print("[index] el índice guardaba el texto en claro: se descarta, corré `obsn reindex`",
+          file=sys.stderr, flush=True)
 
 
 def _ensure_columns(c: sqlite3.Connection) -> None:
@@ -123,7 +152,7 @@ def _ensure_columns(c: sqlite3.Connection) -> None:
     expected = {
         "notes": [("hash", "TEXT"), ("mtime", "REAL"), ("size", "INTEGER"),
                   ("n_chunks", "INTEGER"), ("indexed_at", "REAL")],
-        "chunks": [("n_tok", "INTEGER")],
+        "chunks": [("n_tok", "INTEGER"), ("off_start", "INTEGER"), ("off_end", "INTEGER")],
         "emb": [("modelo", "TEXT")],
     }
     for table, cols in expected.items():
@@ -154,8 +183,18 @@ def chunk(content: str, min_chars: int = 120, max_chars: int = 1200) -> list[dic
     lines = content.split("\n")
     out: list[dict[str, Any]] = []
     buf: list[str] = []
+    buf_start = 0
+    buf_end = 0
     heading, hlevel, ctype = None, 0, "prose"
     in_fence = False
+
+    def agregar(ln: str, i: int) -> None:
+        """Acumula una línea real y recuerda el rango de líneas del bloque."""
+        nonlocal buf_start, buf_end
+        if not buf:
+            buf_start = i
+        buf.append(ln)
+        buf_end = i
 
     def flush(final: bool = False) -> None:
         nonlocal buf, heading, hlevel, ctype
@@ -169,14 +208,16 @@ def chunk(content: str, min_chars: int = 120, max_chars: int = 1200) -> list[dic
                 # descartarse. Descartarlo es cómo una nota corta queda invisible
                 # al RAG (medido 2026-10-19: cuerpo de 62 chars perdido).
                 out[-1]["text"] = (out[-1]["text"] + "\n\n" + text).strip()
+                out[-1]["off_end"] = buf_end
             elif final or len(text) >= min_chars or not out or ctype in ("code", "table", "list"):
-                out.append({"heading": heading, "hlevel": hlevel, "ctype": ctype, "text": text})
+                out.append({"heading": heading, "hlevel": hlevel, "ctype": ctype,
+                            "text": text, "off_start": buf_start, "off_end": buf_end})
         buf = []
 
-    for ln in lines:
+    for i, ln in enumerate(lines):
         if ln.strip().startswith("```"):
             if in_fence:
-                buf.append(ln)
+                agregar(ln, i)
                 flush()
                 in_fence = False
                 ctype = "prose"
@@ -184,10 +225,10 @@ def chunk(content: str, min_chars: int = 120, max_chars: int = 1200) -> list[dic
                 flush()
                 in_fence = True
                 ctype = "code"
-                buf.append(ln)
+                agregar(ln, i)
             continue
         if in_fence:
-            buf.append(ln)
+            agregar(ln, i)
             # Sub-chunking de fences enormes (un solo chunk de 16KB no es buscable)
             if sum(len(b) for b in buf) > 3000:
                 buf.append("")
@@ -199,7 +240,7 @@ def chunk(content: str, min_chars: int = 120, max_chars: int = 1200) -> list[dic
             flush()
             heading, hlevel = m.group(2).strip(), len(m.group(1))
             ctype = "prose"
-            buf.append(ln)
+            agregar(ln, i)
             continue
         if not ln.strip():
             flush()
@@ -218,7 +259,7 @@ def chunk(content: str, min_chars: int = 120, max_chars: int = 1200) -> list[dic
         if nuevo != ctype or sum(len(b) + 1 for b in buf) + len(ln) > max_chars:
             flush()
             ctype = nuevo
-        buf.append(ln)
+        agregar(ln, i)
     # El ÚLTIMO bloque va siempre, aunque sea corto: si no, una nota entera de
     # <120 chars se indexa solo por su heading (medido 2026-10-19: "# Prueba
     # RAG" quedó como único chunk y el cuerpo de la nota era invisible).
@@ -281,12 +322,23 @@ def _fila_postings(texto: str, metadatos: str) -> list[tuple[str, int, int]]:
 
 
 def _poblar_postings(c: sqlite3.Connection) -> None:
-    """Recorre los chunks ya guardados y arma el índice invertido (sin re-embeber)."""
+    """Reconstruye el índice invertido leyendo el vault (el índice no guarda el texto)."""
     c.execute("DELETE FROM postings")
     t0 = time.perf_counter()
+    # Texto por (path, ord): se trocea cada nota UNA vez, no una vez por chunk.
+    por_nota: dict[str, dict[int, str]] = {}
+    for (path,) in c.execute("SELECT DISTINCT path FROM chunks"):
+        try:
+            cuerpo = leer_nota(os.path.join(VAULT, path))
+        except OSError:
+            continue
+        por_nota[path] = {j: ch["text"] for j, ch in enumerate(chunk(cuerpo))}
     pendientes: list[tuple] = []
     total = 0
-    for cid, path, h, txt in c.execute("SELECT id, path, heading, text FROM chunks").fetchall():
+    for cid, path, o, h in c.execute("SELECT id, path, ord, heading FROM chunks").fetchall():
+        txt = por_nota.get(path, {}).get(o)
+        if txt is None:
+            continue
         filas = _fila_postings(txt, f"{path} {h or ''}")
         pendientes.extend((t, cid, n, im) for t, n, im in filas)
         c.execute("UPDATE chunks SET n_tok=? WHERE id=?", (sum(n for _, n, _ in filas), cid))
@@ -479,11 +531,12 @@ def build(force: bool = False) -> None:
             for j, ch in enumerate(chunks):
                 filas = _fila_postings(ch["text"], f"{path} {ch['heading'] or ''}")
                 filas_postings.append(filas)
-                tuplas.append((path, j, ch["heading"], ch["hlevel"], ch["ctype"], ch["text"],
-                               empaquetados[j], sum(n for _, n, _ in filas)))
+                tuplas.append((path, j, ch["heading"], ch["hlevel"], ch["ctype"],
+                               ch["off_start"], ch["off_end"], empaquetados[j],
+                               sum(n for _, n, _ in filas)))
             c.executemany(
-                "INSERT INTO chunks (path, ord, heading, hlevel, ctype, text, vec, n_tok)"
-                " VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO chunks (path, ord, heading, hlevel, ctype, off_start, off_end,"
+                " vec, n_tok) VALUES (?,?,?,?,?,?,?,?,?)",
                 tuplas,
             )
             ids_nuevos = [r[0] for r in
@@ -517,11 +570,9 @@ def build(force: bool = False) -> None:
     # tokeniza: ~100 ms. Si no cambió ninguna nota, el df viejo sigue siendo correcto.
     if changed or stale or not c.execute("SELECT COUNT(*) FROM df").fetchone()[0]:
         c.execute("DELETE FROM df")
-        df: dict[str, int] = {}
-        for (txt,) in c.execute("SELECT text FROM chunks"):
-            for t in set(tok(txt)):
-                df[t] = df.get(t, 0) + 1
-        c.executemany("INSERT INTO df (term, n) VALUES (?,?)", df.items())
+        # df = cuántos chunks contienen el término, y eso ya está en `postings`: no hay
+        # que tokenizar el vault de nuevo para recalcularlo.
+        c.execute("INSERT INTO df (term, n) SELECT term, COUNT(*) FROM postings GROUP BY term")
         c.commit()
 
     total = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
@@ -581,21 +632,33 @@ def key_terms(s: str) -> list[str]:
     return keep or t
 
 
+def _texto_del_chunk(path: str, inicio: int | None, fin: int | None) -> str:
+    """Relee el chunk del vault por su rango de líneas: el índice no guarda el texto."""
+    if inicio is None or fin is None:
+        return ""
+    try:
+        lineas = leer_nota(os.path.join(VAULT, path)).split("\n")
+    except OSError:
+        return ""
+    return "\n".join(lineas[inicio:fin + 1]).strip()
+
+
 def _con_texto(c: sqlite3.Connection, elegidos: list[dict]) -> list[dict]:
     """Agrega el texto a los k ganadores y limpia los campos internos.
 
-    El texto se lee SÓLO para los ganadores: puntuar no lo necesita, así que la
-    búsqueda no arrastra los ~3 MB del vault a memoria.
+    El texto se relee del vault para k notas como máximo, no para el vault entero.
     """
     ids = [r["_id"] for r in elegidos]
-    textos = dict(c.execute(
-        f"SELECT id, text FROM chunks WHERE id IN ({','.join('?' * len(ids))})", ids
-    )) if ids else {}
+    rangos = {r[0]: (r[1], r[2], r[3]) for r in c.execute(
+        f"SELECT id, path, off_start, off_end FROM chunks"
+        f" WHERE id IN ({','.join('?' * len(ids))})", ids
+    )} if ids else {}
     for r in elegidos:
         cid = r.pop("_id")
         r.pop("_cob", None)
         r.pop("_nota", None)
-        r["text"] = textos.get(cid, "")
+        path, ini, fin = rangos.get(cid, ("", None, None))
+        r["text"] = _texto_del_chunk(path, ini, fin) if path else ""
     return elegidos
 
 
@@ -698,17 +761,15 @@ def search(query: str, k: int = 5, alpha: float = 0.6) -> list[dict]:
         "SELECT id, path, ord, heading, hlevel, ctype, vec, n_tok FROM chunks"
         " WHERE vec IS NOT NULL"
     ).fetchall()
-    if not filas:  # sin embeddings → TF-IDF puro sobre texto
-        puntajes = []
-        for path, o, h, hl, ct, txt in c.execute(
-                "SELECT path, ord, heading, hlevel, ctype, text FROM chunks"):
-            tt = tok(txt)
-            s = sum(tt.count(t) for t in qset)
-            if s:
-                puntajes.append((s, path, o, h, hl, ct, txt))
+    if not filas:  # sin embeddings → TF-IDF puro sobre el índice invertido
+        metas = {r[0]: r[1:] for r in c.execute(
+            "SELECT id, path, ord, heading, hlevel, ctype FROM chunks")}
+        puntajes = [(d["tf"], cid, *metas[cid]) for cid, d in por_chunk.items()
+                    if d["tf"] and cid in metas]
         puntajes.sort(key=lambda x: -x[0])
-        return [{"path": r[1], "ord": r[2], "heading": r[3], "chunk_type": r[5],
-                 "score": r[0] / 100, "text": r[6][:6000]} for r in puntajes[:k]]
+        elegidos = [{"_id": r[1], "path": r[2], "ord": r[3], "heading": r[4],
+                     "chunk_type": r[6], "score": r[0] / 100} for r in puntajes[:k]]
+        return _con_texto(c, elegidos)
     try:
         mat = np.frombuffer(b"".join(r[6] for r in filas), dtype=np.float32).reshape(len(filas), -1)
     except ValueError as exc:

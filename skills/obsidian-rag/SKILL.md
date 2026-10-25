@@ -174,9 +174,10 @@ guarda con qué modelo se construyó, y la caché `emb` está particionada por m
 - Las escrituras son **atómicas** (temporal + `rename`), así que un corte no deja la nota a
   medias.
 - `delete` manda a `.trash/` con fecha; solo borra de verdad con `--hard`.
-- **El índice tiene el vault en claro** (`chunks.text`). Tratalo como dato sensible: mismo
-  cuidado que el vault mismo. Si el índice se comparte o se respalda, se está copiando el
-  vault entero.
+- **El índice ya no guarda el texto**: guarda términos, un rango de líneas por chunk y el
+  vector. Igual tratalo como dato sensible, porque el vocabulario completo y los vectores
+  están ahí. Si el índice se comparte o se respalda, no viaja el vault entero pero viaja de
+  qué habla.
 
 ## Cómo medir un cambio
 

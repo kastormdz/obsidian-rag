@@ -37,6 +37,7 @@ import os
 import re
 import sys
 from collections import defaultdict
+from pathlib import Path
 
 from .config import DB as _CONFIG_DB
 
@@ -85,16 +86,23 @@ def vec_por_nota() -> dict[str, "object"]:
 
 
 def enlaces_actuales() -> dict[str, set[str]]:
-    import sqlite3
-    c = sqlite3.connect(DB)
-    notes: dict[str, list[str]] = defaultdict(list)
-    for p, t in c.execute("SELECT path, text FROM chunks ORDER BY path, ord"):
-        notes[p].append(t)
-    c.close()
+    """Wikilinks que ya existen, leídos del vault (el índice no guarda el texto)."""
+    from .config import VAULT
+    from .vault import EXCLUIDAS
+
+    raiz = Path(VAULT)
+    notes: dict[str, str] = {}
+    for p in sorted(raiz.rglob("*.md")):
+        rel = p.relative_to(raiz)
+        if any(parte in EXCLUIDAS for parte in rel.parts):
+            continue
+        try:
+            notes[rel.as_posix()] = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
     cur: dict[str, set[str]] = defaultdict(set)
     names = {p: os.path.splitext(os.path.basename(p))[0].lower() for p in notes}
-    for p, body in notes.items():
-        joined = "\n".join(body)
+    for p, joined in notes.items():
         for raw in WIKILINK.findall(joined):
             t = raw.strip().lower().rstrip(".md")
             for q, n in names.items():
