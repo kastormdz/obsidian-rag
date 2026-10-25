@@ -8,6 +8,8 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-25
+
 ### Added
 
 - `obsn upgrade` con `--check` (0 al día, 10 hay actualización, 1 error), `--how` y
