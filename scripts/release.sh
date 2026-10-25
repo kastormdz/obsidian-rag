@@ -80,13 +80,20 @@ precondiciones() {
 resolver_python() {
     local candidato
     # Puede ser un console-script de pip (`#!<venv>/bin/python`) o un launcher de bash que
-    # hace `exec "<venv>/bin/python" -m ...`. En los dos casos la ruta está en el archivo,
-    # así que se busca ahí: el shebang del wrapper es `env bash` y no sirve.
-    candidato="$(grep -hoE '[^ "'"'"']*/python[0-9.]*' "$OBSN" 2>/dev/null | head -1)"
-    if [ -n "$candidato" ] && [ -x "$candidato" ]; then
-        printf '%s' "$candidato"
-        return 0
-    fi
+    # hace `exec "$HOME/.../python" -m ...`. En los dos casos la ruta está en el archivo,
+    # pero en el launcher viene con `$HOME` sin expandir: hay que expandirla antes de
+    # probarla, o `-x` falla y termina usando el python3 del PATH (otro venv).
+    while IFS= read -r candidato; do
+        candidato="$(printf '%s' "$candidato" \
+            | sed "s|\${HOME}|$HOME|g; s|\$HOME|$HOME|g")"
+        case "$candidato" in
+            "~/"*) candidato="$HOME/${candidato#\~/}" ;;
+        esac
+        if [ -x "$candidato" ]; then
+            printf '%s' "$candidato"
+            return 0
+        fi
+    done < <(grep -hoE '[^ "'"'"']*/python[0-9.]*' "$OBSN" 2>/dev/null)
     command -v python3
 }
 
