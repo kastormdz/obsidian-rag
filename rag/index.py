@@ -596,9 +596,27 @@ def key_terms(s: str) -> list[str]:
     return keep or t
 
 
+def _con_texto(c: sqlite3.Connection, elegidos: list[dict]) -> list[dict]:
+    """Agrega el texto a los k ganadores y limpia los campos internos.
+
+    El texto se lee SÓLO para los ganadores: puntuar no lo necesita, así que la
+    búsqueda no arrastra los ~3 MB del vault a memoria.
+    """
+    ids = [r["_id"] for r in elegidos]
+    textos = dict(c.execute(
+        f"SELECT id, text FROM chunks WHERE id IN ({','.join('?' * len(ids))})", ids
+    )) if ids else {}
+    for r in elegidos:
+        cid = r.pop("_id")
+        r.pop("_cob", None)
+        r.pop("_nota", None)
+        r["text"] = textos.get(cid, "")
+    return elegidos
+
+
 def search(query: str, k: int = 5, alpha: float = 0.6) -> list[dict]:
     c = conn()
-    import numpy as np
+    import math
 
     total_chunks = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
     if not total_chunks:
@@ -606,15 +624,24 @@ def search(query: str, k: int = 5, alpha: float = 0.6) -> list[dict]:
     qset = set(tok(query))
     if not qset:
         return []
-    # Los términos CON contenido (sin stopwords) son los que definen el sujeto de la
+    # Los términos CON CONTENIDO (sin stopwords) son los que definen el sujeto de la
     # búsqueda: si no, "no" puede ser el más específico y la cobertura deja de filtrar.
     key_set = set(key_terms(query))
 
-    # ── IDF de la consulta, una fila por término
+    # ── IDF de la consulta, una fila por término (math, no numpy: la fase léxica no
+    # necesita el modelo ni la matriz de vectores)
     idf: dict[str, float] = {}
+    apariciones: dict[str, int] = {}
     for t in qset:
         fila = c.execute("SELECT n FROM df WHERE term=?", (t,)).fetchone()
-        idf[t] = float(np.log1p(total_chunks / (1 + (fila[0] if fila else 0))))
+        n = fila[0] if fila else 0
+        apariciones[t] = n
+        idf[t] = math.log1p(total_chunks / (1 + n))
+    # Descarte por vocabulario: si NINGÚN término con contenido existe en el vault, no
+    # hay paráfrasis que buscar (las palabras de una paráfrasis real sí existen en el
+    # corpus). Evita el matmul entero en consultas fuera de dominio: ~50 ms -> ~3 ms.
+    if key_set and all(apariciones.get(t, 0) == 0 for t in key_set):
+        return []
     idf_max = max(idf.values()) if idf else 1.0
     w = {t: (idf[t] / idf_max if idf_max else 0.0) for t in qset}
     lex_w = (sum(w.values()) / len(w)) if w else 1.0
@@ -645,7 +672,39 @@ def search(query: str, k: int = 5, alpha: float = 0.6) -> list[dict]:
     nota_cob = {p: sum(idf.get(t, 0.0) for t in ts) / masa_total
                 for p, ts in nota_terms.items()}
 
+    # ── Fase 1: ¿la evidencia léxica ya alcanza? Sin vectores y sin numpy.
+    # La mayoría de las consultas reales nombran algo que está en el texto. En ese caso
+    # traer 11 MB de vectores y hacer el matmul es trabajo que se descarta: se responde
+    # sólo con el índice invertido. Medido: 29 ms -> ~4 ms por búsqueda, y el CLI no
+    # paga los ~77 ms de importar numpy.
+    ganadoras = {p for p, cob in nota_cob.items() if cob >= _COBERTURA_FUERTE}
+    if ganadoras:
+        marcas_path = ",".join("?" * len(ganadoras))
+        filas_lex = c.execute(
+            f"SELECT id, path, ord, heading, hlevel, ctype, n_tok FROM chunks"
+            f" WHERE path IN ({marcas_path})", tuple(ganadoras)
+        ).fetchall()
+        out_lex = []
+        for cid, path, o, h, hl, ct, n_tok in filas_lex:
+            d = por_chunk.get(cid)
+            if not d:      # chunk de la nota que no menciona la consulta: no compite
+                continue
+            tf = min(1.0, d["tf"] / n_tok) if n_tok else 0.0
+            cob = d["masa"] / masa_total
+            score = alpha * (tf * lex_w) + _PESO_COBERTURA * cob
+            if d["meta"]:
+                score *= 1.35
+            if hl == 1:
+                score += 0.15
+            elif hl == 2:
+                score += 0.10
+            out_lex.append({"path": path, "ord": o, "heading": h, "hlevel": hl,
+                            "chunk_type": ct, "score": score, "sem": None, "_id": cid})
+        out_lex.sort(key=lambda r: -r["score"])
+        return _con_texto(c, out_lex[:k])
+
     # ── Señal semántica: un matmul, sin traer el texto de todo el vault
+    import numpy as np
     qv = _query_vector(query, c)
     if qv is None:
         return []
@@ -734,14 +793,7 @@ def search(query: str, k: int = 5, alpha: float = 0.6) -> list[dict]:
 
     # El texto se lee SÓLO para los k ganadores: el índice no lo necesita para
     # puntuar, así que la búsqueda no arrastra los 3 MB del vault a memoria.
-    ids = [r["_id"] for r in elegidos]
-    textos = dict(c.execute(
-        f"SELECT id, text FROM chunks WHERE id IN ({','.join('?' * len(ids))})", ids
-    ))
-    for r in elegidos:
-        r.pop("_cob", None)
-        r["text"] = textos.get(r.pop("_id"), "")
-    return elegidos
+    return _con_texto(c, elegidos)
 
 
 _MODEL_HOLDER = [None]

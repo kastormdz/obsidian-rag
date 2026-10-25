@@ -153,6 +153,25 @@ coseno). El texto completo se lee únicamente para los k resultados finales.
 **Criterio:** búsqueda < 60 ms con modelo cargado; deja de importar cuánto crezca el vault en
 texto (sí en vectores).
 
+### Tarea 3.5 — No pagar el vector cuando el léxico ya alcanza
+
+**Archivo:** `rag/index.py` (`search()`, fase 1)
+
+Medido después de 3.1–3.4: de los ~29 ms de una búsqueda, **23 ms eran traer 11 MB de vectores**
+y 7,7 ms el matmul; y de los ~180 ms del CLI, **77 ms eran importar numpy**. Pero ese trabajo
+se descarta cuando la nota ganadora ya está identificada por el índice invertido.
+
+**Cambio:** si alguna nota cubre ≥ `_COBERTURA_FUERTE` de la masa IDF, se responde sólo con
+`postings` + `math.log1p` (sin numpy, sin vectores). El coseno entra únicamente cuando el
+léxico no alcanza.
+
+**Resultado medido:** CLI 180-194 ms → **64-74 ms**; término exacto in-process 30 ms → **3 ms**;
+paráfrasis con nota ganadora ~90 ms. Banco sin cambios (POS 3/10 top-1, 5/10 top-5, NEG 0/8).
+
+**Trade-off:** en la fase léxica no hay coseno que desempate, así que si dos notas cubren la
+consulta el orden lo deciden tf/heading. Para recuperar el desempate semántico habría que
+pagar numpy + el matmul (o cachear la matriz en un proceso de vida larga).
+
 ---
 
 ## Fase 4 — Calidad de recuperación (medir antes de decidir)

@@ -124,11 +124,17 @@ Vault de referencia: 196 notas, 7.550 chunks, 384 dimensiones float32 normalizad
 | Operación | Tiempo |
 |---|---|
 | `obsn search` (léxico, sin modelo) | ~60 ms |
-| `obsn rag`, consulta ya cacheada | ~160-200 ms |
-| `obsn rag`, consulta nueva (carga del modelo) | ~1,7 s |
+| `obsn rag` con evidencia léxica (el caso común) | **~65 ms** |
+| `obsn rag` en proceso, fase léxica | **~3-25 ms** |
+| `obsn rag` paráfrasis sin términos (necesita el modelo) | ~1,7 s la primera vez · ~90-180 ms después |
 | `obsn reindex` sin cambios | ~240 ms |
 | `obsn reindex --force` | ~220 s (7.550 embeddings en CPU) |
 | Tamaño del índice | 31 MB (antes 115 MB con chunking por línea y caché vieja) |
+
+La búsqueda va **en dos fases**: si una nota cubre al menos el 70% de la masa IDF de la
+consulta, se responde sólo con el índice invertido, sin traer los 11 MB de vectores ni
+importar numpy (3-25 ms). El coseno entra únicamente cuando el léxico no alcanza: ahí se
+paga el matmul y, si la consulta es nueva, la carga del modelo.
 
 La consulta se cachea por hash en la tabla `emb`, así que **repetir una búsqueda no carga
 el modelo**. La primera ejecución de una consulta nueva sí.
