@@ -127,6 +127,50 @@ result is dropped. An empty list beats an invented answer.
 `search` is a different tool: substring over the text, no model. Use it when you know the
 exact word and want speed.
 
+## The embedding model
+
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`. fastembed serves it as a
+quantized ONNX build (`qdrant/paraphrase-multilingual-MiniLM-L12-v2-onnx-Q`), 241 MB in
+`~/.cache/fastembed`.
+
+| | |
+|---|---|
+| Dimensions | 384 (`float32`, 1,536 B per chunk) |
+| Layers | 12 |
+| Languages | multilingual, trained on Spanish and English among others |
+| Runtime | ONNX Runtime on CPU, no torch |
+| On disk | 241 MB (224 graph + 16 tokenizer) |
+| Loading it | ~1.5 s, and only when the query is not resolved lexically |
+| Embedding | ~38 chunks/s: a 7,600-chunk vault takes ~3 minutes |
+| Cost in the index | 11.2 MB of vectors for 7,651 chunks |
+
+### Why this one
+
+1. **It understands Spanish.** The vault is in Spanish with English technical terms. An
+   English-only model loses exactly the paraphrases a RAG has to handle.
+2. **It runs on CPU, no GPU.** Quantized ONNX and 12 layers: 1.5 s to load, ~3 minutes to embed
+   the whole vault. A bigger model multiplies that cost without touching the real problem.
+3. **384 dimensions are enough.** Each vector is 1,536 B, so 7,651 chunks take 11.2 MB. At 768
+   that part of the index doubles and search gets slower, without improving the queries that
+   matter.
+4. **The ceiling is the ranking, not the model.** With a paraphrase that shares no words, top-1
+   hits 3 out of 10; when the query carries the exact term, 4 out of 5. That is why precision
+   comes from IDF coverage and the cosine is only one part of the score.
+5. **We tried a bigger one and it did not fit.** `paraphrase-multilingual-mpnet-base-v2` (1.1 GB,
+   768 dims) died out of memory (SIGKILL) before finishing the benchmark on this machine, so it
+   stayed out.
+
+To try another model without touching the index:
+
+```bash
+python bench/compare_models.py sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+```
+
+It measures against the chunks already indexed: top-1 and top-5 on the paraphrases, plus the
+highest cosine among out-of-domain queries. To adopt it, `OBS_RAG_MODEL=<model> obsn reindex
+--force`: the index stores the model in `meta` and rebuilds itself, and the vector cache key
+includes the model, so nothing stale is reused.
+
 ## The index
 
 It is built from a content hash. A `touch` does not fool it, and neither does an edit that
@@ -182,7 +226,7 @@ Turn it off with `OBS_RAG_NO_ASYNC=1`.
 | `OBS_RAG_VAULT` | `~/Obsidian` | vault to read and index (see [Point it at your vault](#point-it-at-your-vault)) |
 | `OBS_RAG_INDEX` | `$XDG_DATA_HOME/obsidian-rag/index.db` | index file |
 | `OBS_RAG_CACHE` | `$XDG_CACHE_HOME/fastembed` | model cache |
-| `OBS_RAG_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | embedding model |
+| `OBS_RAG_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | embedding model (see [The embedding model](#the-embedding-model)) |
 | `OBS_RAG_NO_ASYNC` | unset | `1` disables the background reindex |
 
 ## Upgrade

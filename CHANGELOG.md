@@ -10,6 +10,9 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ### Added
 
+- Sección "El modelo de embeddings" en los dos READMEs: cuál es, cuánto pesa, cuánto tarda,
+  cuánto ocupa en el índice y las cinco razones por las que se eligió (incluido el modelo de
+  1,1 GB que no entró por memoria).
 - Sección "Configurar el vault" en los dos READMEs: la variable, cómo verificarla con
   `obsn status`, qué pasa al cambiar de vault y cómo se configura en systemd.
 

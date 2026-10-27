@@ -129,6 +129,50 @@ llega devuelve vacío. Una lista vacía es mejor que un resultado inventado.
 `search` es otra cosa: substring sobre el texto, sin modelo. Sirve cuando sabés la palabra
 exacta y querés velocidad.
 
+## El modelo de embeddings
+
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`. fastembed lo sirve como ONNX
+cuantizado (`qdrant/paraphrase-multilingual-MiniLM-L12-v2-onnx-Q`) y son 241 MB en
+`~/.cache/fastembed`.
+
+| | |
+|---|---|
+| Dimensiones | 384 (`float32`, 1.536 B por chunk) |
+| Capas | 12 |
+| Idiomas | multilingüe, entrenado para español e inglés entre otros |
+| Motor | ONNX Runtime en CPU, sin torch |
+| En disco | 241 MB (224 del grafo + 16 del tokenizer) |
+| Cargarlo | ~1,5 s, y sólo cuando la consulta no se resuelve por léxico |
+| Embeber | ~38 chunks/s: un vault de 7.600 chunks, ~3 minutos |
+| Costo en el índice | 11,2 MB de vectores para 7.651 chunks |
+
+### Por qué éste
+
+1. **Entiende español.** El vault está en español con términos técnicos en inglés. Un modelo
+   sólo-inglés pierde justo las paráfrasis, que es lo que un RAG tiene que resolver.
+2. **Corre en CPU sin GPU.** ONNX cuantizado y 12 capas: carga en 1,5 s y embebe el vault
+   entero en ~3 minutos. Un modelo más grande multiplica ese costo sin tocar el problema real.
+3. **384 dimensiones alcanzan.** Cada vector son 1.536 B y los 7.651 chunks ocupan 11,2 MB. Con
+   768 el índice duplica esa parte y la búsqueda tarda más, sin mejorar las consultas que
+   importan.
+4. **El techo está en el ranking, no en el modelo.** Con una paráfrasis que no comparte ninguna
+   palabra, el top-1 acierta 3 de 10; cuando la consulta trae el término exacto, 4 de 5. Por eso
+   la precisión la hace la cobertura IDF y el coseno es sólo una parte del score.
+5. **Probamos uno más grande y no entró.** `paraphrase-multilingual-mpnet-base-v2` (1,1 GB, 768
+   dims) murió por memoria (SIGKILL) antes de terminar el benchmark en esta máquina, así que
+   quedó afuera.
+
+Para probar otro modelo sin tocar el índice:
+
+```bash
+python bench/compare_models.py sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+```
+
+Mide sobre los chunks ya indexados: top-1 y top-5 en las paráfrasis, y el coseno máximo de las
+consultas fuera de dominio. Para adoptarlo, `OBS_RAG_MODEL=<modelo> obsn reindex --force`: el
+índice guarda el modelo en `meta` y se rehace solo, y la caché de vectores incluye el modelo,
+así que no reusa nada viejo.
+
 ## El índice
 
 Se arma por hash del contenido. Un `touch` no lo engaña y una edición del mismo largo
@@ -182,7 +226,7 @@ Se apaga con `OBS_RAG_NO_ASYNC=1`.
 | `OBS_RAG_VAULT` | `~/Obsidian` | vault a leer e indexar (ver [Configurar el vault](#configurar-el-vault)) |
 | `OBS_RAG_INDEX` | `$XDG_DATA_HOME/obsidian-rag/index.db` | archivo del índice |
 | `OBS_RAG_CACHE` | `$XDG_CACHE_HOME/fastembed` | caché del modelo |
-| `OBS_RAG_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | modelo de embeddings |
+| `OBS_RAG_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | modelo de embeddings (ver [El modelo de embeddings](#el-modelo-de-embeddings)) |
 | `OBS_RAG_NO_ASYNC` | sin definir | `1` apaga el reindex en segundo plano |
 
 ## Actualizar
