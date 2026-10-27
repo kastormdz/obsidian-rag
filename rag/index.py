@@ -442,6 +442,13 @@ def leer_nota(abs_: str) -> str:
 
 def build(force: bool = False) -> None:
     c = conn()
+    # Estas dos guardias van ANTES de tocar `meta`: si el vault está mal apuntado, el
+    # índice tiene que quedar como estaba, no en estado "building".
+    if not os.path.isdir(VAULT):
+        raise SystemExit(
+            f"no existe el vault {VAULT}: revisá OBS_RAG_VAULT (tiene que ser la carpeta "
+            "que contiene .obsidian/)"
+        )
     # El índice sabe con qué criterio se troceó y con qué modelo se embebió. Si
     # cambió cualquiera de los dos, el índice viejo NO sirve aunque el hash de la
     # nota sea idéntico: hay que reconstruirlo entero.
@@ -450,9 +457,18 @@ def build(force: bool = False) -> None:
             print("[build] criterio de indexado o modelo distinto al del índice: rebuild completo",
                   flush=True)
             force = True
+    notes = listar_notas()
+    # Un vault mal apuntado devuelve cero notas, y el purgado de abajo borraría el índice
+    # entero dejándolo "listo". Se niega, salvo que se pida con --force.
+    if not notes and not force:
+        indexadas = c.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+        if indexadas:
+            raise SystemExit(
+                f"el vault {VAULT} no tiene notas y el índice tiene {indexadas}: no toco nada "
+                "(¿OBS_RAG_VAULT apunta al lugar equivocado?). Si es a propósito: --force"
+            )
     _set_meta(c, "estado", "building")
     c.commit()
-    notes = listar_notas()
     # El índice invertido se arma desde el texto ya guardado: no hace falta
     # re-embeber para tenerlo, así que esta migración es barata.
     if _meta(c, "postings") != str(POSTINGS_VERSION) and _meta(c, "chunker") == str(CHUNKER_VERSION):

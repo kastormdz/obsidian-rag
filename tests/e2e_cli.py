@@ -128,7 +128,11 @@ def main() -> int:
         check("delete manda a papelera", p.returncode == 0 and not (vault / "02-docs/renombrada.md").exists(), p.stderr)
         check("delete deja la nota en .trash", any((vault / ".trash").iterdir()), "sin .trash")
         p = correr("reindex")
-        check("reindex purga la nota borrada", "purgadas" in p.stdout or "sin cambios" in p.stdout, p.stdout[-300:])
+        check("reindex se niega a vaciar el índice si el vault quedó sin notas",
+              p.returncode == 1 and "apunta al lugar equivocado" in p.stderr, p.stderr[-300:])
+        p = correr("reindex", "--force")
+        check("reindex --force sí purga la última nota",
+              p.returncode == 0 and "purgadas" in p.stdout, p.stdout[-300:])
         p = correr("rag", "buchovial-8891", "3")
         check("rag ya no devuelve la nota borrada", "renombrada.md" not in p.stdout, p.stdout[:300])
 

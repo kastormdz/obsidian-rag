@@ -8,10 +8,21 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ## [Unreleased]
 
+### Added
+
+- Sección "Configurar el vault" en los dos READMEs: la variable, cómo verificarla con
+  `obsn status`, qué pasa al cambiar de vault y cómo se configura en systemd.
+
 ### Changed
 
 - `scripts/release.sh` calla los avisos de dependencias del venv anfitrión y sólo los
   muestra si `pip` falla.
+
+### Fixed
+
+- Un `OBS_RAG_VAULT` mal apuntado vaciaba el índice sin avisar: ahora `reindex` se niega
+  cuando el vault no existe o queda sin notas mientras el índice tiene, y pide `--force`
+  para vaciarlo a propósito.
 
 ## [0.2.0] - 2026-10-25
 

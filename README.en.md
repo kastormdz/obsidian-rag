@@ -18,6 +18,47 @@ pip install -e .
 The first search downloads the model (241 MB) into `~/.cache/fastembed`. Loading it costs
 1.5 s, and it only happens when the query cannot be resolved lexically.
 
+## Point it at your vault
+
+By default it looks for the vault in `~/Obsidian`. If yours is there, you are done.
+
+If it lives somewhere else, point `OBS_RAG_VAULT` at the folder that contains `.obsidian/`,
+which is the vault root. It is not a subfolder and not the vault name: it is the directory.
+
+```bash
+export OBS_RAG_VAULT="$HOME/Documents/my-vault"                     # this session
+echo 'export OBS_RAG_VAULT="$HOME/Documents/my-vault"' >> ~/.bashrc # permanent
+```
+
+To check it took, `obsn status` prints the vault and the index it is using:
+
+```
+$ obsn status
+notas=199 chunks=7651 con_embedding=7651 sin_chunks=3
+vault=/home/you/Documents/my-vault
+indice=/home/you/.local/share/obsidian-rag/index.db
+```
+
+Two things people forget, and each one costs an afternoon:
+
+- **The index belongs to one vault.** Index paths are relative to the vault root. If you
+  change `OBS_RAG_VAULT`, the old index still points at notes that no longer exist: run
+  `obsn reindex`, which purges the leftovers and indexes the new ones. It will take as long as
+  embedding a whole vault, because to the index every note is new.
+- **One vault, one index.** For two vaults, give each one its own file:
+  `OBS_RAG_VAULT=~/other OBS_RAG_INDEX=~/.local/share/obsidian-rag/other.db obsn reindex`.
+- **A wrong path will not empty your index.** `reindex` refuses when the vault does not exist,
+  or when it has no notes while the index does: it tells you to check `OBS_RAG_VAULT` instead
+  of purging 200 notes over a typo. To empty it on purpose, `obsn reindex --force`.
+
+If the reindex runs from systemd, the service does not inherit your shell: put the variable
+in the unit.
+
+```ini
+[Service]
+Environment=OBS_RAG_VAULT=/home/you/Documents/my-vault
+```
+
 ## Commands
 
 Search:
@@ -138,7 +179,7 @@ Turn it off with `OBS_RAG_NO_ASYNC=1`.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `OBS_RAG_VAULT` | `~/Obsidian` | vault to read and index |
+| `OBS_RAG_VAULT` | `~/Obsidian` | vault to read and index (see [Point it at your vault](#point-it-at-your-vault)) |
 | `OBS_RAG_INDEX` | `$XDG_DATA_HOME/obsidian-rag/index.db` | index file |
 | `OBS_RAG_CACHE` | `$XDG_CACHE_HOME/fastembed` | model cache |
 | `OBS_RAG_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | embedding model |

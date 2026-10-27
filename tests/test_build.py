@@ -93,6 +93,36 @@ class BuildTransaccional(unittest.TestCase):
         # La otra se indexó igual: un fallo no frena al resto.
         self.assertTrue(any("zanahoria" in t for t in self._chunks("buena.md")))
 
+    def _n_chunks(self, path: str) -> int:
+        """Cuenta chunks en la DB (sirve aunque la nota ya no exista en disco)."""
+        with sqlite3.connect(self.idx.DB) as c:
+            return c.execute("SELECT COUNT(*) FROM chunks WHERE path=?", (path,)).fetchone()[0]
+
+    def test_no_vacia_el_indice_si_el_vault_no_existe(self) -> None:
+        # Un OBS_RAG_VAULT mal apuntado devolvía cero notas y el purgado borraba el índice
+        # entero, dejándolo "ready". Ahora se niega antes de tocar nada.
+        antes = self._chunks("buena.md")
+        previo = self.idx.VAULT
+        self.idx.VAULT = "/ruta/que/no/existe"
+        try:
+            with self.assertRaises(SystemExit) as ctx:
+                self.idx.build(force=True)
+        finally:
+            self.idx.VAULT = previo
+        self.assertIn("OBS_RAG_VAULT", str(ctx.exception))
+        self.assertEqual(self._chunks("buena.md"), antes, "el índice quedó vaciado")
+
+    def test_no_vacia_el_indice_si_el_vault_queda_sin_notas(self) -> None:
+        for nota in self.vault.glob("*.md"):
+            nota.unlink()
+        with self.assertRaises(SystemExit) as ctx:
+            self.idx.build()
+        self.assertIn("apunta al lugar equivocado", str(ctx.exception))
+        self.assertEqual(self._n_chunks("buena.md"), 1, "se purgó el índice sin permiso")
+        # Con --force sí se puede vaciar a propósito
+        self.idx.build(force=True)
+        self.assertEqual(self._n_chunks("buena.md"), 0)
+
 
 class ErroresDeCli(unittest.TestCase):
     def test_status_con_indice_sin_tabla_notes_avisa_que_hacer(self) -> None:
