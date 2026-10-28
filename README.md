@@ -266,11 +266,30 @@ Corre el gate completo antes de tocar nada, mueve lo que está en `[Unreleased]`
 nueva con la fecha, crea el tag anotado y el release, y reinstala el paquete editable para que
 `obsn --version` lo refleje. Si `[Unreleased]` está vacío, se niega: no hay nada que publicar.
 
+## Plugin de Hermes
+
+`plugins/obsidian-rag/` convierte el vault en siete tools que el agente llama solo:
+`vault_search`, `vault_read`, `vault_write`, `vault_list`, `vault_move`, `vault_delete` y
+`vault_status`. Trae además una skill embebida (`obsidian-rag:vault`) con el orden correcto:
+buscar antes de responder, leer antes de citar, buscar la nota canónica antes de crear una
+nueva.
+
+```bash
+hermes plugins install kastormdz/obsidian-rag#plugins/obsidian-rag --no-enable
+hermes plugins enable obsidian-rag
+```
+
+El plugin **no importa el motor**: cada llamada ejecuta `obsn` en un subprocess (73 ms
+medidos, 24 de ellos de arranque del intérprete). Así el gateway no carga numpy ni el modelo
+de 241 MB, un fallo de búsqueda no se lleva puesto al agente, y el CLI sigue siendo la única
+API. Configuración en `plugins.entries.obsidian-rag`: `obsn`, `vault` y `timeout`.
+
 ## Para agentes
 
 `skills/obsidian-rag/SKILL.md` es una skill con frontmatter YAML y protocolo: cuándo usar
 `rag` y cuándo `search`, qué hacer si devuelve vacío, cómo citar la nota y las trampas de
-argv. Apuntá al agente ahí en vez de explicarle la herramienta.
+argv. Apuntá al agente ahí en vez de explicarle la herramienta. Si además instalás el plugin
+de Hermes, la skill viaja con él y no hace falta copiarla.
 
 ## Seguridad
 
@@ -288,7 +307,15 @@ argv. Apuntá al agente ahí en vez de explicarle la herramienta.
 python -m unittest discover -s tests -t .
 ```
 
-62 tests contra vaults temporales. No tocan ningún vault real.
+72 tests contra vaults temporales. No tocan ningún vault real.
+
+El plugin de Hermes tiene su propio E2E, que lo carga como lo hace Hermes y ejercita los
+siete tools contra un vault temporal:
+
+```bash
+python tests/e2e_plugin.py    # 24 chequeos
+hermes plugins doctor plugins/obsidian-rag --ci
+```
 
 Para medir recuperación y latencia antes de tocar el ranking, el chunker o el modelo:
 

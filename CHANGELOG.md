@@ -10,6 +10,10 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ### Added
 
+- **Plugin de Hermes** en `plugins/obsidian-rag/`: siete tools (`vault_search`, `vault_read`,
+  `vault_write`, `vault_list`, `vault_move`, `vault_delete`, `vault_status`) sobre el binario
+  `obsn`, más una skill embebida. Sin dependencias de Python; el gateway no carga el modelo.
+  `tests/e2e_plugin.py` lo ejercita contra un vault temporal.
 - Sección "El modelo de embeddings" en los dos READMEs: cuál es, cuánto pesa, cuánto tarda,
   cuánto ocupa en el índice y las cinco razones por las que se eligió (incluido el modelo de
   1,1 GB que no entró por memoria).

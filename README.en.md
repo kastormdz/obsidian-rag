@@ -267,11 +267,29 @@ new version with today's date, creates the annotated tag and the release, and re
 editable package so `obsn --version` reflects it. If `[Unreleased]` is empty it refuses: there
 is nothing to ship.
 
+## Hermes plugin
+
+`plugins/obsidian-rag/` turns the vault into seven tools the agent calls on its own:
+`vault_search`, `vault_read`, `vault_write`, `vault_list`, `vault_move`, `vault_delete` and
+`vault_status`. It also bundles a skill (`obsidian-rag:vault`) with the right order: search
+before answering, read before quoting, look for the canonical note before creating a new one.
+
+```bash
+hermes plugins install kastormdz/obsidian-rag#plugins/obsidian-rag --no-enable
+hermes plugins enable obsidian-rag
+```
+
+The plugin **does not import the engine**: every call runs `obsn` in a subprocess (73 ms
+measured, 24 of them interpreter startup). That keeps numpy and the 241 MB model out of the
+gateway process, a broken search cannot take the agent down, and the CLI stays the single
+API. Configuration lives in `plugins.entries.obsidian-rag`: `obsn`, `vault` and `timeout`.
+
 ## For agents
 
 `skills/obsidian-rag/SKILL.md` is a skill with YAML frontmatter and a protocol: when to use
 `rag` and when `search`, what to do when the result is empty, how to cite the note, and the
-argv pitfalls. Point the agent there instead of explaining the tool.
+argv pitfalls. Point the agent there instead of explaining the tool. With the Hermes plugin
+installed, the skill ships with it and there is nothing to copy.
 
 ## Security
 
@@ -289,7 +307,15 @@ argv pitfalls. Point the agent there instead of explaining the tool.
 python -m unittest discover -s tests -t .
 ```
 
-62 tests against temporary vaults. They never touch a real vault.
+72 tests against temporary vaults. They never touch a real vault.
+
+The Hermes plugin has its own E2E, which loads it the way Hermes does and exercises all seven
+tools against a temporary vault:
+
+```bash
+python tests/e2e_plugin.py    # 24 checks
+hermes plugins doctor plugins/obsidian-rag --ci
+```
 
 To measure retrieval and latency before changing the ranking, the chunker or the model:
 
