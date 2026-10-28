@@ -28,6 +28,7 @@ import time
 from typing import Any, Optional
 
 from .config import DB as _CONFIG_DB, MODELO, VAULT as _CONFIG_VAULT, EMBEDDINGS_CACHE
+from .vault import dentro_del_vault
 
 DB = str(_CONFIG_DB)
 # El vault vive descifrado en disco. El índice se construye desde el filesystem:
@@ -426,6 +427,10 @@ def listar_notas() -> list[dict[str, Any]]:
             if nombre.startswith(".") or not nombre.endswith(".md"):
                 continue
             abs_ = os.path.join(raiz, nombre)
+            # Un symlink que apunta afuera del vault no es una nota del vault: si se indexa,
+            # el contenido de ~/.ssh o /etc queda persistido y `rag` lo devuelve.
+            if not dentro_del_vault(abs_, VAULT):
+                continue
             try:
                 mt = os.stat(abs_).st_mtime
             except OSError:
@@ -436,6 +441,10 @@ def listar_notas() -> list[dict[str, Any]]:
 
 
 def leer_nota(abs_: str) -> str:
+    # Defensa en profundidad: aunque el path venga de un listado confiable, no se lee nada
+    # que resuelva fuera del vault.
+    if not dentro_del_vault(abs_, VAULT):
+        raise ValueError(f"fuera del vault: {abs_!r}")
     with open(abs_, "r", encoding="utf-8", errors="replace") as fh:
         return fh.read()
 

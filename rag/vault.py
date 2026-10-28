@@ -69,6 +69,49 @@ def _dentro(destino: Path, pedido: str) -> Path:
     return resuelto
 
 
+def dentro_del_vault(abs_: Path | str, raiz: Path | str | None = None) -> bool:
+    """¿El path RESUELTO sigue dentro del vault?
+
+    `Path.resolve()` sigue los symlinks, así que un `nota.md -> ~/.ssh/id_ed25519` da
+    `False`. Es el único chequeo que sirve: comparar el path sin resolver deja pasar
+    cualquier link que apunte afuera.
+
+    `raiz` se pasa explícita cuando el llamador tiene su propia copia de `VAULT` (el índice
+    la tiene, y en los tests el vault es temporal): validar contra otra raíz rechazaría
+    notas legítimas.
+    """
+    base = Path(raiz if raiz is not None else VAULT).resolve()
+    try:
+        Path(abs_).resolve().relative_to(base)
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def notas_del_vault() -> dict[str, str]:
+    """Todas las notas del vault, confinadas, con su texto.
+
+    Punto ÚNICO para los caminos que caminan el vault por su cuenta (índice, grafo,
+    enlaces). Antes cada uno hacía su propio `os.walk`/`rglob` y ninguno filtraba
+    symlinks: un link a un archivo de afuera se leía y quedaba indexado.
+    """
+    raiz = VAULT.resolve()
+    notas: dict[str, str] = {}
+    for actual, dirs, archivos in os.walk(raiz, followlinks=False):
+        dirs[:] = sorted(d for d in dirs if d not in EXCLUIDAS and not d.startswith("."))
+        for nombre in sorted(archivos):
+            if nombre.startswith(".") or not nombre.lower().endswith(".md"):
+                continue
+            destino = Path(actual) / nombre
+            if not dentro_del_vault(destino):
+                continue
+            try:
+                notas[destino.relative_to(raiz).as_posix()] = _leer(destino)
+            except OSError:
+                continue
+    return notas
+
+
 def _recorrer() -> Iterable[Path]:
     for raiz, dirs, archivos in os.walk(VAULT):
         dirs[:] = [d for d in dirs if d not in EXCLUIDAS]

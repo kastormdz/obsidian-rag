@@ -45,21 +45,13 @@ FALSE_POSITIVE = re.compile(
 def load_notes(db: str = DB) -> dict[str, str]:
     """Leer las notas del vault. El índice ya no guarda el texto en claro."""
     from .config import VAULT
-    from .vault import EXCLUIDAS
+    from .vault import notas_del_vault
 
-    raiz = Path(VAULT)
-    if not raiz.is_dir():
-        sys.exit(f"obs-graph: no existe el vault {raiz}")
-    notas: dict[str, str] = {}
-    for p in sorted(raiz.rglob("*.md")):
-        rel = p.relative_to(raiz)
-        if any(parte in EXCLUIDAS for parte in rel.parts):
-            continue
-        try:
-            notas[rel.as_posix()] = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-    return notas
+    if not Path(VAULT).is_dir():
+        sys.exit(f"obs-graph: no existe el vault {VAULT}")
+    # `notas_del_vault` es el único que camina el vault: filtra symlinks que apunten afuera.
+    # Con `rglob` propio, un `nota.md -> ~/.ssh/id_ed25519` se leía y terminaba en el grafo.
+    return notas_del_vault()
 
 
 def basename(path: str) -> str:

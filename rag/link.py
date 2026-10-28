@@ -87,19 +87,10 @@ def vec_por_nota() -> dict[str, "object"]:
 
 def enlaces_actuales() -> dict[str, set[str]]:
     """Wikilinks que ya existen, leídos del vault (el índice no guarda el texto)."""
-    from .config import VAULT
-    from .vault import EXCLUIDAS
+    from .vault import notas_del_vault
 
-    raiz = Path(VAULT)
-    notes: dict[str, str] = {}
-    for p in sorted(raiz.rglob("*.md")):
-        rel = p.relative_to(raiz)
-        if any(parte in EXCLUIDAS for parte in rel.parts):
-            continue
-        try:
-            notes[rel.as_posix()] = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
+    # Mismo camino que el grafo: confina los symlinks que apuntan afuera del vault.
+    notes = notas_del_vault()
     cur: dict[str, set[str]] = defaultdict(set)
     names = {p: os.path.splitext(os.path.basename(p))[0].lower() for p in notes}
     for p, joined in notes.items():
