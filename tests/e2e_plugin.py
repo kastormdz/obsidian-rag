@@ -23,13 +23,16 @@ def check(name, ok, detail=""):
 
 class Ctx:
     def __init__(self):
-        self.tools, self.skills, self.cfg = {}, [], {}
+        self.tools, self.skills, self.cfg, self.hooks = {}, [], {}, {}
 
     def get_config(self, key, default=None):
         return self.cfg.get(key, default)
 
     def register_tool(self, name, toolset, schema, handler, **kw):
         self.tools[name] = {"toolset": toolset, "schema": schema, "handler": handler}
+
+    def register_hook(self, name, callback, **kw):
+        self.hooks.setdefault(name, []).append(callback)
 
     def register_skill(self, name, path, description="", **kw):
         self.skills.append((name, Path(path)))
@@ -70,6 +73,21 @@ def main():
     check("registra 7 tools", len(ctx.tools) == 7, sorted(ctx.tools))
     check("registra la skill", len(ctx.skills) == 1 and ctx.skills[0][1].exists(), ctx.skills)
     check("toolset obsidian_vault", {t["toolset"] for t in ctx.tools.values()} == {"obsidian_vault"})
+
+    # --- hook: el único irreversible pide aprobación
+    hooks = ctx.hooks.get("pre_tool_call") or []
+    check("registra el hook pre_tool_call", len(hooks) == 1, str(len(hooks)))
+    hook = hooks[0] if hooks else (lambda **kw: None)
+    gate = hook(tool_name="vault_delete", args={"path": "01-Infra/vieja.md", "permanent": True})
+    check("delete permanente pide aprobación",
+          bool(gate) and gate.get("action") == "approve"
+          and gate.get("rule_key") == "vault_delete_permanent",
+          str(gate)[:70])
+    check("el aviso nombra el path", "01-Infra/vieja.md" in (gate or {}).get("message", ""))
+    check("delete a papelera NO pregunta", hook(tool_name="vault_delete", args={"path": "x.md"}) is None)
+    check("delete permanente sin path igual frena",
+          (hook(tool_name="vault_delete", args={"permanent": True}) or {}).get("action") == "approve")
+    check("los demás tools no se gatean", hook(tool_name="vault_read", args={"path": "x.md"}) is None)
 
     call = lambda name, args: json.loads(ctx.tools[name]["handler"](args))
 

@@ -41,7 +41,10 @@ Un vault de Obsidian indexado con obsidian-rag. Los tools son un envoltorio del 
 
 - `vault_delete` manda a `.trash` por defecto: es recuperable, pero igual conviene decirlo
   al usuario cuando se borra algo que él no pidió borrar.
-- `permanent: true` no se deshace. Pedí confirmación explícita antes.
+- `permanent: true` no se deshace y **pide aprobación del usuario**: el plugin lo frena con un
+  hook `pre_tool_call`, porque es el único tool irreversible. Si el usuario aprueba, seguí; si
+  no, dejalo en la papelera. No busques la vuelta (borrar y recrear, o `--hard` por terminal):
+  el freno está ahí por algo.
 - `vault_move` no pisa: si el destino existe, falla. Renombrá con intención.
 
 ## Después de escribir

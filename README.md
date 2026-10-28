@@ -179,12 +179,12 @@ Se arma por hash del contenido. Un `touch` no lo engaña y una edición del mism
 tampoco. `reindex` sin `--force` sólo toca lo que cambió, y tarda 0,1 s si no cambió nada.
 
 Trocea por bloque: una tabla entera o una lista entera es un chunk. Antes era una fila por
-chunk, y con 21.592 micro-trozos de 8 tokens el ranking premiaba filas de tabla en lugar de
-las secciones que explican el tema. El mismo vault quedó en 7.550 chunks.
+chunk, y con micro-trozos de una línea el ranking premiaba filas de tabla en lugar de las
+secciones que explican el tema. El mismo vault bajó a un tercio de los chunks.
 
-No guarda el texto de las notas. Guarda los términos, un rango de líneas por chunk y el
-vector. Cuando mostrás un resultado, relee esas líneas del vault. Son 41 MB y no son una
-copia legible del vault.
+Guarda los términos, un rango de líneas por chunk y el vector. Cuando mostrás un resultado,
+relee esas líneas del vault. Son ~1,5 KB por chunk, casi todo el vector de 384 floats: un
+vault de 200 notas queda en ~45 MB, y no es una copia legible del vault.
 
 Los vectores se cachean por hash del texto y del modelo. Por eso `reindex --force` con la
 caché caliente tarda 7 s en vez de 198.
@@ -284,6 +284,10 @@ medidos, 24 de ellos de arranque del intérprete). Así el gateway no carga nump
 de 241 MB, un fallo de búsqueda no se lleva puesto al agente, y el CLI sigue siendo la única
 API. Configuración en `plugins.entries.obsidian-rag`: `obsn`, `vault` y `timeout`.
 
+El único tool que pregunta antes de actuar es `vault_delete` con `permanent: true`: borra sin
+papelera, así que el plugin lo frena con un hook y el usuario ve el path. El resto escribe de
+forma atómica o manda a `.trash`.
+
 ## Para agentes
 
 `skills/obsidian-rag/SKILL.md` es una skill con frontmatter YAML y protocolo: cuándo usar
@@ -324,8 +328,8 @@ python bench/bench_search.py --verbose
 python bench/compare_models.py
 ```
 
-Números de referencia con 196 notas y 7.550 chunks: top-1 en paráfrasis 3/10, top-5 5/10,
-cero falsos positivos en 8 consultas fuera de dominio, y 5/5 cuando el término es exacto. La
+Números de referencia del banco: top-1 en paráfrasis 3/10, top-5 5/10, cero falsos positivos
+en 8 consultas fuera de dominio, y 5/5 cuando el término es exacto. La
 recuperación puramente semántica es lo más flojo del conjunto: un modelo de 384 dimensiones
 y 12 capas en CPU no resuelve bien una paráfrasis sin ninguna palabra en común. Si eso te
 importa más que la velocidad, `bench/compare_models.py` compara alternativas sobre el índice

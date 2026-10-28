@@ -8,6 +8,15 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ## [Unreleased]
 
+### Changed
+
+- **`vault_delete` con `permanent: true` pide aprobación.** Es el único tool irreversible: el
+  plugin registra un hook `pre_tool_call` que devuelve `{"action": "approve"}` con
+  `rule_key: vault_delete_permanent`, así que el usuario ve el path antes del borrado sin
+  vuelta. El borrado normal va a `.trash` y no pregunta.
+- Los README ya no clavan el tamaño del vault: los conteos de notas y chunks envejecían y se
+  contradecían con el índice real. Quedan las proporciones y el costo por chunk, que no caducan.
+
 ### Added
 
 - **Plugin de Hermes** en `plugins/obsidian-rag/`: siete tools (`vault_search`, `vault_read`,

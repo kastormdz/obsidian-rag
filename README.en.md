@@ -178,12 +178,13 @@ keeps the same length. `reindex` without `--force` only touches what changed, an
 when nothing did.
 
 Chunks follow blocks: a whole table or a whole list is one chunk. It used to be one row per
-chunk, and with 21,592 micro-chunks of 8 tokens the ranking favored table rows over the
-sections that explain the topic. The same vault came down to 7,550 chunks.
+chunk, and with one-line micro-chunks the ranking favored table rows over the sections that
+explain the topic. The same vault came down to a third of the chunks.
 
 The index does not store the note text. It stores terms, a line range per chunk and the
-vector. When a result is printed, those lines are re-read from the vault. That is 41 MB, and
-it is not a readable copy of the vault.
+vector. When a result is printed, those lines are re-read from the vault. That is ~1.5 KB per
+chunk, almost all of it the 384-float vector: a 200-note vault lands around 45 MB, and it is
+not a readable copy of the vault.
 
 Vectors are cached by a hash of the text plus the model. That is why `reindex --force` with a
 warm cache takes 7 s instead of 198.
@@ -284,6 +285,10 @@ measured, 24 of them interpreter startup). That keeps numpy and the 241 MB model
 gateway process, a broken search cannot take the agent down, and the CLI stays the single
 API. Configuration lives in `plugins.entries.obsidian-rag`: `obsn`, `vault` and `timeout`.
 
+The only tool that asks before acting is `vault_delete` with `permanent: true`: it deletes
+without the trash, so the plugin gates it with a hook and the user sees the path. Everything
+else writes atomically or goes to `.trash`.
+
 ## For agents
 
 `skills/obsidian-rag/SKILL.md` is a skill with YAML frontmatter and a protocol: when to use
@@ -324,9 +329,9 @@ python bench/bench_search.py --verbose
 python bench/compare_models.py
 ```
 
-Reference numbers with 196 notes and 7,550 chunks: paraphrases hit top-1 in 3 of 10 cases,
-top-5 in 5 of 10, zero false positives across 8 out-of-domain queries, and 5/5 when the term
-is exact. Pure semantic retrieval is the weak spot: a 384-dimension, 12-layer model on CPU
+Reference numbers from the bench: paraphrases hit top-1 in 3 of 10 cases, top-5 in 5 of 10,
+zero false positives across 8 out-of-domain queries, and 5/5 when the term is exact. Pure
+semantic retrieval is the weak spot: a 384-dimension, 12-layer model on CPU
 does not handle a paraphrase with no shared words well. If that matters more to you than
 speed, `bench/compare_models.py` compares alternatives against the index you already have.
 

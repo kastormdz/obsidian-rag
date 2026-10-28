@@ -22,8 +22,13 @@ plugins/obsidian-rag/
 | `vault_write` | Crea, agrega, prepende o reemplaza texto | `obsn write` · `obsn edit` |
 | `vault_list` | Notas, carpetas con conteo o tags con uso | `obsn list` · `folders` · `tags` |
 | `vault_move` | Mueve o renombra; no pisa el destino | `obsn move` |
-| `vault_delete` | A la papelera, o permanente con `permanent: true` | `obsn delete` |
+| `vault_delete` | A la papelera, o permanente con `permanent: true` (**pide aprobación**) | `obsn delete` |
 | `vault_status` | Vault activo, notas, chunks, modelo | `obsn status` |
+
+El único tool irreversible es `vault_delete` con `permanent: true`. Un hook `pre_tool_call`
+devuelve `{"action": "approve", ...}` con `rule_key: vault_delete_permanent`, así que el
+usuario ve el path antes de que se borre algo sin vuelta. El borrado normal va a `.trash` y
+no pregunta.
 
 ## Instalar
 
