@@ -66,6 +66,25 @@ Los nombres largos del estándar MCP son alias de los cortos: `read_note`, `writ
 `search_notes`, `get_note_metadata`. Sirven para que un agente use el mismo contrato sin
 adaptar nada.
 
+## Si sos un agente de Hermes
+
+Con el plugin instalado (`hermes plugins install kastormdz/obsidian-rag#plugins/obsidian-rag`),
+no ejecutes comandos: hay siete tools que hacen exactamente lo mismo.
+
+| En vez de | Llamá |
+|---|---|
+| `obsn rag "<tema>" 5` | `vault_search` (`mode: hybrid`) |
+| `obsn search "<texto>"` | `vault_search` (`mode: exact`) |
+| `obsn read <path>` | `vault_read` |
+| `obsn write` / `obsn edit` | `vault_write` (`create`/`append`/`prepend`/`replace`) |
+| `obsn list` / `folders` / `tags` | `vault_list` (`notes`/`folders`/`tags`) |
+| `obsn move` | `vault_move` |
+| `obsn delete` | `vault_delete` |
+| `obsn status` | `vault_status` |
+
+El protocolo de abajo aplica igual: es el mismo motor, sin la terminal en el medio. No
+reindexes a mano después de escribir; el plugin dispara el mismo worker.
+
 ## Protocolo para agentes
 
 1. **Buscar antes de responder.** Toda pregunta sobre el vault empieza con
