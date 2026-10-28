@@ -317,7 +317,7 @@ El plugin de Hermes tiene su propio E2E, que lo carga como lo hace Hermes y ejer
 siete tools contra un vault temporal:
 
 ```bash
-python tests/e2e_plugin.py    # 24 chequeos
+python tests/e2e_plugin.py    # 30 chequeos
 hermes plugins doctor plugins/obsidian-rag --ci
 ```
 
