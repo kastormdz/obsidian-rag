@@ -13,6 +13,12 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 - Banner de cabecera en `docs/banner.webp` (1600×533, 38 KB en WebP), arriba del título en los
   dos READMEs, con un borde tenue que lo separa del fondo oscuro de GitHub.
 
+### Changed
+
+- **`key_terms()` eliminada**: quedó muerta cuando el ranking empezó a sacar los términos con
+  contenido del propio índice (ARG-08). Sin cambio de comportamiento: `search()` devuelve lo mismo
+  y la extracción no cuesta un pase extra.
+
 ### Fixed
 
 - **Fixtures de los tests**: los ejemplos usan `alpha`/`beta`/`gamma` sobre `192.0.2.0/24`, el
