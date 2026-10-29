@@ -8,6 +8,8 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-29
+
 ### Added
 
 - **Vigencia por nota (`stale_after`)**: una nota puede declarar cuándo vence en el
