@@ -8,7 +8,10 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-10-28
+### Added
+
+- Banner de cabecera en `docs/banner.webp` (1600×533, 38 KB en WebP), arriba del título en los
+  dos READMEs, con un borde tenue que lo separa del fondo oscuro de GitHub.
 
 ### Fixed
 
@@ -22,6 +25,11 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 - **Conexiones sqlite**: `build`, `search`, `_main` y `cmd_status` las dejaban abiertas
   (`with sqlite3.connect(...)` commitea, no cierra). Ahora hay un `_conexion()` que cierra en
   `finally`; la suite corre con `-W error::ResourceWarning` sin fallar.
+
+## [0.4.0] - 2026-10-28
+
+### Fixed
+
 - **Chunker (ARG-01)**: un encabezado seguido de línea en blanco se fusionaba con la sección
   ANTERIOR, así que la sección nueva perdía su `heading` y sus términos no entraban como
   `in_meta`. En el vault real eran **366 secciones en 104 de 203 notas**; ahora quedan 13 en

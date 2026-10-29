@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/banner.webp" alt="obsidian-rag: búsqueda híbrida local sobre un vault de Obsidian" width="880">
+</p>
+
 # obsidian-rag
 
 [![CI](https://github.com/kastormdz/obsidian-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/kastormdz/obsidian-rag/actions/workflows/ci.yml)
