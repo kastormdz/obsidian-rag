@@ -47,7 +47,8 @@ intérprete**. `python3` del sistema puede no ser el mismo que el del venv.
 
 | Comando | Qué hace |
 |---|---|
-| `obsn rag "consulta" [N]` | búsqueda híbrida (léxica + semántica). `N` default 5, `--json` |
+| `obsn rag "consulta" [N]` | búsqueda híbrida (léxica + semántica). `N` default 5, `--json`, `--fresh-only` |
+| `obsn stale [--days N]` | notas vencidas según su `stale_after`, con los días de atraso |
 | `obsn search "texto"` | substring exacto sobre el contenido, sin modelo. `--folder`, `--tag`, `--limit`, `--json` |
 | `obsn reindex [--force]` | indexa/actualiza. Sin `--force` solo toca las notas cuyo **hash** cambió |
 | `obsn status` | notas, chunks y ruta del índice |

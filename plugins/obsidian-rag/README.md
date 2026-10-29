@@ -17,7 +17,7 @@ plugins/obsidian-rag/
 
 | Tool | Qué hace | Motor |
 |---|---|---|
-| `vault_search` | Búsqueda híbrida (`hybrid`) o substring (`exact`), con folder/tag | `obsn rag` · `obsn search` |
+| `vault_search` | Búsqueda híbrida (`hybrid`) o substring (`exact`), con folder/tag; devuelve `vencida` por hit y acepta `fresh_only` | `obsn rag` · `obsn search` |
 | `vault_read` | Lee una nota entera | `obsn read` |
 | `vault_write` | Crea, agrega, prepende o reemplaza texto | `obsn write` · `obsn edit` |
 | `vault_list` | Notas, carpetas con conteo o tags con uso | `obsn list` · `folders` · `tags` |

@@ -1,5 +1,5 @@
 name: obsidian-rag
-version: 0.2.2
+version: 0.3.0
 manifest_version: 2
 description: >-
   Búsqueda híbrida y CRUD de notas sobre un vault de Obsidian, con obsn como motor.

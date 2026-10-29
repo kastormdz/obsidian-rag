@@ -47,7 +47,8 @@ def make_vault() -> Path:
         "# Keycloak\n\nFederación con OpenLDAP para los servicios internos.\nSSO de las aplicaciones.\n",
         encoding="utf-8")
     (root / "01-Infra" / "docker.md").write_text(
-        "# Docker\n\nContenedores del servidor de desarrollo.\n", encoding="utf-8")
+        "---\nstale_after: 2020-01-01\n---\n# Docker\n\nContenedores del servidor de desarrollo.\n",
+        encoding="utf-8")
     (root / "02-Personal" / "viaje.md").write_text(
         "# Viaje\n\nPasajes para las vacaciones.\n", encoding="utf-8")
     return root
@@ -129,6 +130,23 @@ def main():
     ht = call("vault_search", {"query": "keycloak", "tag": "infra"})
     check("hybrid con tag se rechaza claro",
           ht.get("ok") is False and "mode=exact" in ht.get("error", ""), ht.get("error", "")[:70])
+
+    # --- vigencia: la nota con stale_after vencido se marca y se puede excluir
+    dv = call("vault_search", {"query": "contenedores del servidor", "limit": 5})
+    hit = next((x for x in dv.get("hits", []) if x["path"] == "01-Infra/docker.md"), None)
+    check("hybrid marca vencida=true en la nota vencida",
+          dv.get("ok") and hit is not None and hit.get("vencida") is True, str(hit))
+    check("la respuesta avisa cuántas vencidas trajo",
+          dv.get("vencidas") == 1 and "aviso" in dv, f"vencidas={dv.get('vencidas')}")
+    sf = call("vault_search", {"query": "contenedores del servidor", "limit": 5,
+                               "fresh_only": True})
+    check("fresh_only excluye la vencida",
+          sf.get("ok") and all(x["path"] != "01-Infra/docker.md" for x in sf.get("hits", [])),
+          str([x["path"] for x in sf.get("hits", [])]))
+    st_v = call("vault_status", {})
+    check("status cuenta vencidas y sin_fecha",
+          st_v.get("ok") and st_v.get("vencidas") == 1 and "sin_fecha" in st_v,
+          f"vencidas={st_v.get('vencidas')} sin_fecha={st_v.get('sin_fecha')}")
 
     # --- read
     rd = call("vault_read", {"path": "01-Infra/keycloak.md"})

@@ -12,11 +12,21 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ### Added
 
+- **Vigencia por nota (`stale_after`)**: una nota puede declarar cuándo vence en el
+  frontmatter (`stale_after`, y opcional `updated`). El índice la guarda normalizada, el
+  ranking la usa (factor `×0.75`, configurable con `OBS_RAG_STALE_PENALTY`) y cada resultado
+  dice `vencida`. Comandos nuevos: `obsn stale [--days N] [--json]`, `obsn rag --fresh-only`.
+  `status` suma `vencidas`, `sin_fecha` y `por_vencer_7d`; `meta` dice "VENCIDA hace N días".
+  Sin fecha declarada la nota no se penaliza: `vencida` queda en `null`, no en `false`.
+  El nombre y la semántica del campo son los de OKF v0.2 §5.5.
 - Banner de cabecera en `docs/banner.webp` (1600×533, 38 KB en WebP), arriba del título en los
   dos READMEs, con un borde tenue que lo separa del fondo oscuro de GitHub.
 
 ### Changed
 
+- **Esquema del índice**: `notes` gana las columnas `stale_after` y `updated`. La migración es
+  aditiva y la primera corrida después de actualizar reconstruye el índice sola (el `meta`
+  `vigencia` lo dispara), sin que haga falta `--force`.
 - **`key_terms()` eliminada**: quedó muerta cuando el ranking empezó a sacar los términos con
   contenido del propio índice (ARG-08). Sin cambio de comportamiento: `search()` devuelve lo mismo
   y la extracción no cuesta un pase extra.

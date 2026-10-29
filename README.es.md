@@ -134,6 +134,40 @@ llega devuelve vacío. Una lista vacía es mejor que un resultado inventado.
 `search` es otra cosa: substring sobre el texto, sin modelo. Sirve cuando sabés la palabra
 exacta y querés velocidad.
 
+## Vigencia
+
+Un índice al día puede devolver una nota que dejó de ser cierta hace seis meses. La frescura
+del índice ya está resuelta (hash del contenido, timer de 2 minutos); esto es la otra mitad:
+la nota declara cuándo vence.
+
+```yaml
+---
+stale_after: 2026-12-31   # una fecha, o un instante ISO completo con offset
+updated: 2026-10-01       # opcional, informativo: cuándo se revisó
+---
+```
+
+Las reglas son a propósito chiquitas:
+
+| | |
+|---|---|
+| Semántica | vencida cuando `now >= stale_after`; una fecha sin hora vale hasta el final de ese día, en local |
+| Sin fecha | la nota queda `sin fecha`: no se penaliza ni se filtra. Castigar la ausencia convierte "no sé" en "es falso" |
+| Ranking | el score de una vencida se multiplica por `OBS_RAG_STALE_PENALTY` (0,75 por defecto). Baja, no desaparece |
+| Filtro duro | sólo con `--fresh-only` (`fresh_only` en el plugin). Esconderlas por defecto devolvería "no encontrado", que es la misma mentira al revés |
+
+```bash
+obsn rag "certificados" --fresh-only     # sólo notas que siguen siendo ciertas
+obsn stale                               # qué venció y hace cuánto
+obsn stale --days 90 --json              # los peores, en JSON
+obsn status                              # suma vencidas / sin_fecha a la línea
+obsn meta 02-infra/dns.md                # "vigencia: VENCIDA hace 76 días"
+```
+
+El nombre del campo y su semántica son los de [OKF v0.2 §5.5](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md):
+una nota que declara `stale_after` ya es portable a un bundle, y un consumidor que entiende
+OKF lee ésta sin traducir nada.
+
 ## El modelo de embeddings
 
 `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`. fastembed lo sirve como ONNX
@@ -335,6 +369,7 @@ Para medir recuperación y latencia antes de tocar el ranking, el chunker o el m
 
 ```bash
 python bench/bench_search.py --verbose
+python bench/bench_vigencia.py
 python bench/compare_models.py
 ```
 

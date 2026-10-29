@@ -48,6 +48,7 @@ def search(args: dict, **kwargs) -> str:
         mode = args.get("mode") or "hybrid"
         folder = _clean(args.get("folder")).rstrip("/")
         tag = str(args.get("tag") or "").lstrip("#")
+        fresh_only = bool(args.get("fresh_only"))
 
         if mode == "exact":
             flags = ["--limit", str(limit)]
@@ -58,7 +59,9 @@ def search(args: dict, **kwargs) -> str:
             rows = client.run("search", query, flags=flags, want_json=True)
             hits = [
                 {"path": r.get("path"), "matches": r.get("matches"),
-                 "in_path": bool(r.get("path_hit")), "context": _snippet(r.get("context", ""))}
+                 "in_path": bool(r.get("path_hit")), "context": _snippet(r.get("context", "")),
+                 # `exact` no pasa por el índice: no sabe de vigencia, y null lo dice.
+                 "vencida": None, "stale_after": None}
                 for r in rows
             ]
         else:
@@ -74,7 +77,8 @@ def search(args: dict, **kwargs) -> str:
             # ganadores dejaba la respuesta en 1 o 2 notas aunque se pidieran 5. Con folder
             # se pide más margen, porque el filtro se aplica después de deduplicar.
             pedir = min(limit * (5 if folder else 3), 60)
-            rows = client.run("rag", query, str(pedir), want_json=True)
+            flags = ["--fresh-only"] if fresh_only else []
+            rows = client.run("rag", query, str(pedir), flags=flags, want_json=True)
             hits, seen = [], set()
             for r in rows:
                 path = r.get("path") or ""
@@ -88,6 +92,9 @@ def search(args: dict, **kwargs) -> str:
                     "heading": r.get("heading") or "",
                     "score": round(float(r.get("score") or 0), 3),
                     "snippet": _snippet(r.get("text", "")),
+                    # None = la nota no declara fecha; no es lo mismo que "vigente".
+                    "vencida": r.get("vencida"),
+                    "stale_after": (r.get("stale_after") or "")[:10] or None,
                 })
                 if len(hits) >= limit:
                     break
@@ -95,6 +102,15 @@ def search(args: dict, **kwargs) -> str:
         payload = {"mode": mode, "query": query, "count": len(hits), "hits": hits}
         if folder:
             payload["folder"] = folder
+        if fresh_only:
+            payload["fresh_only"] = True
+        vencidas = sum(1 for h in hits if h.get("vencida"))
+        if vencidas:
+            payload["vencidas"] = vencidas
+            payload["aviso"] = (
+                f"{vencidas} de {len(hits)} resultados están VENCIDOS según su stale_after. "
+                "Decí la fecha al citarlos o buscá con fresh_only=true."
+            )
         if not hits:
             payload["note"] = (
                 "Sin resultados. Probá mode=exact con un término literal que aparezca en el "

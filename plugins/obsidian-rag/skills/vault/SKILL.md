@@ -24,7 +24,20 @@ Un vault de Obsidian indexado con obsidian-rag. Los tools son un envoltorio del 
   texto (un nombre de servicio, un comando, una sigla). El substring no perdona.
 - Si tampoco, **`vault_status`**: confirma a qué vault y a qué índice está apuntando y
   cuántas notas ve. Un índice de otro vault explica todos los vacíos.
-- `folder` y `tag` sólo existen en `mode: exact`. En `hybrid` se filtran descartando hits.
+- `folder` y `tag` en `hybrid`: `folder` filtra por prefijo; `tag` se rechaza, porque el
+  índice no guarda tags.
+
+## Vigencia: no cites algo vencido como si fuera de hoy
+
+Cada hit puede traer `vencida`: `false` (sigue vigente), `true` (pasó su `stale_after`) o
+`null` (la nota no declara fecha). Si viene `true`:
+
+- decí **cuándo venció** al citarla ("esto es de agosto, verificalo"), nunca lo presentes como
+  estado actual;
+- si la respuesta tiene que ser cierta hoy, repetí la búsqueda con `fresh_only: true`;
+- si el dato ya no sirve, ofrecé corregir la nota en vez de seguir repitiéndolo.
+
+`null` no es "vigente": es "nadie declaró". No lo presentes como garantía.
 
 ## Escribir sin ensuciar el vault
 

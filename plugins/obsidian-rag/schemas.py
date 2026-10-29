@@ -21,6 +21,7 @@ SEARCH = {
             "mode": {"type": "string", "enum": ["hybrid", "exact"], "description": "hybrid = semántica + léxica; exact = substring."},
             "folder": {"type": "string", "description": "Filtra por carpeta (ej. '03-Personal'). Funciona en los dos modos."},
             "tag": {"type": "string", "description": "Sólo mode=exact: el índice no guarda tags y en hybrid se rechaza."},
+            "fresh_only": {"type": "boolean", "description": "Sólo mode=hybrid: descarta notas vencidas por su stale_after. Un resultado trae vencida=true|false|null (null = la nota no declara fecha)."},
         },
         "required": ["query"],
     },

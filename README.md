@@ -132,6 +132,40 @@ result is dropped. An empty list beats an invented answer.
 `search` is a different tool: substring over the text, no model. Use it when you know the
 exact word and want speed.
 
+## Freshness
+
+An index that is up to date can still return a note that stopped being true six months ago.
+The index freshness is solved already (content hash, 2-minute timer); this is the other half:
+a note can declare when it expires.
+
+```yaml
+---
+stale_after: 2026-12-31   # a date, or a full ISO instant with offset
+updated: 2026-10-01       # optional, informational: when it was last reviewed
+---
+```
+
+The rules are deliberately small:
+
+| | |
+|---|---|
+| Semantics | stale when `now >= stale_after`; a date without a time means the end of that day, local |
+| No date | the note is `sin fecha`: it is not penalised and not filtered. Punishing the absence would turn "I don't know" into "it's false" |
+| Ranking | a stale note's score is multiplied by `OBS_RAG_STALE_PENALTY` (default `0.75`). It slides down, it does not disappear |
+| Hard filter | only with `--fresh-only` (`fresh_only` in the plugin). Dropping stale notes by default would return "not found", which is the same lie in the other direction |
+
+```bash
+obsn rag "certificados" --fresh-only     # only notes that are still true
+obsn stale                               # what expired, and how long ago
+obsn stale --days 90 --json              # the worst offenders, machine-readable
+obsn status                              # adds vencidas / sin_fecha to the line
+obsn meta 02-infra/dns.md                # "vigencia: VENCIDA hace 76 días"
+```
+
+The field name and its semantics are the ones from [OKF v0.2 §5.5](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md):
+a note that declares `stale_after` is already portable to a bundle, and a consumer that
+understands OKF reads this one without translation.
+
 ## The embedding model
 
 `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`. fastembed serves it as a
@@ -334,6 +368,7 @@ To measure retrieval and latency before changing the ranking, the chunker or the
 
 ```bash
 python bench/bench_search.py --verbose
+python bench/bench_vigencia.py
 python bench/compare_models.py
 ```
 
