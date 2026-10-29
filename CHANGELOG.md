@@ -8,6 +8,8 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-28
+
 ### Fixed
 
 - **Chunker (ARG-01)**: un encabezado seguido de línea en blanco se fusionaba con la sección
