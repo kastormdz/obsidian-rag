@@ -26,9 +26,11 @@ import sqlite3
 import sys
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Any, Iterator, Optional
 
-from .config import DB as _CONFIG_DB, MODELO, VAULT as _CONFIG_VAULT, EMBEDDINGS_CACHE
+from .config import (DB as _CONFIG_DB, EMBEDDINGS_CACHE, MODELO, STALE_PENALTY,
+                     VAULT as _CONFIG_VAULT)
 from .vault import dentro_del_vault, frontmatter
 from .vigencia import vigencia
 
@@ -738,6 +740,35 @@ def _texto_del_chunk(path: str, inicio: int | None, fin: int | None) -> str:
     return "\n".join(lineas[inicio:fin + 1]).strip()
 
 
+def _mapa_vigencia(
+    c: sqlite3.Connection, ahora: Optional[datetime] = None
+) -> dict[str, tuple[Optional[bool], Optional[str]]]:
+    """path -> (vencida, stale_after ISO). Sin fecha declarada => (None, None): no opina."""
+    ahora = ahora or datetime.now(timezone.utc)
+    mapa: dict[str, tuple[Optional[bool], Optional[str]]] = {}
+    for path, iso in c.execute("SELECT path, stale_after FROM notes"):
+        if not iso:
+            mapa[path] = (None, None)
+            continue
+        try:
+            vence = datetime.fromisoformat(iso)
+        except ValueError:      # índice escrito por una versión anterior
+            mapa[path] = (None, None)
+            continue
+        mapa[path] = (ahora >= vence, iso)
+    return mapa
+
+
+def _penalizar(
+    score: float, path: str, vig: dict[str, tuple[Optional[bool], Optional[str]]]
+) -> tuple[float, Optional[bool], Optional[str]]:
+    """Aplica el factor de vigencia. Un vencido baja, no desaparece."""
+    vencida, iso = vig.get(path, (None, None))
+    if vencida:
+        score *= STALE_PENALTY
+    return score, vencida, iso
+
+
 def _con_texto(c: sqlite3.Connection, elegidos: list[dict]) -> list[dict]:
     """Agrega el texto a los k ganadores y limpia los campos internos.
 
@@ -772,16 +803,18 @@ def _con_texto(c: sqlite3.Connection, elegidos: list[dict]) -> list[dict]:
     return elegidos
 
 
-def search(query: str, k: int = 5, alpha: float = 0.6) -> list[dict]:
+def search(query: str, k: int = 5, alpha: float = 0.6,
+           fresh_only: bool = False) -> list[dict]:
     # Sin índice no hay nada que buscar, y `conn()` CREARÍA una DB vacía: después
     # `status` diría "0 notas" en vez de "no hay índice, corré obsn reindex".
     if not os.path.exists(DB):
         return []
     with _conexion() as c:
-        return _buscar_con(c, query, k, alpha)
+        return _buscar_con(c, query, k, alpha, fresh_only)
 
 
-def _buscar_con(c: sqlite3.Connection, query: str, k: int, alpha: float) -> list[dict]:
+def _buscar_con(c: sqlite3.Connection, query: str, k: int, alpha: float,
+                fresh_only: bool = False) -> list[dict]:
     import math
 
     total_chunks = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
@@ -858,6 +891,7 @@ def _buscar_con(c: sqlite3.Connection, query: str, k: int, alpha: float) -> list
             f" WHERE path IN ({marcas_path})", tuple(ganadoras)
         ).fetchall()
         out_lex = []
+        vig = _mapa_vigencia(c)
         for cid, path, o, h, hl, ct, n_tok in filas_lex:
             d = por_chunk.get(cid)
             if not d:      # chunk de la nota que no menciona la consulta: no compite
@@ -871,8 +905,12 @@ def _buscar_con(c: sqlite3.Connection, query: str, k: int, alpha: float) -> list
                 score += 0.15
             elif hl == 2:
                 score += 0.10
+            score, vencida, iso = _penalizar(score, path, vig)
+            if fresh_only and vencida:
+                continue
             out_lex.append({"path": path, "ord": o, "heading": h, "hlevel": hl,
-                            "chunk_type": ct, "score": score, "sem": None, "_id": cid})
+                            "chunk_type": ct, "score": score, "sem": None, "_id": cid,
+                            "vencida": vencida, "stale_after": iso})
         out_lex.sort(key=lambda r: -r["score"])
         return _con_texto(c, out_lex[:k])
 
@@ -892,8 +930,15 @@ def _buscar_con(c: sqlite3.Connection, query: str, k: int, alpha: float) -> list
         puntajes = [(d["tf"], cid, *metas[cid]) for cid, d in por_chunk.items()
                     if d["tf"] and cid in metas]
         puntajes.sort(key=lambda x: -x[0])
-        elegidos = [{"_id": r[1], "path": r[2], "ord": r[3], "heading": r[4],
-                     "chunk_type": r[6], "score": r[0] / 100} for r in puntajes[:k]]
+        vig = _mapa_vigencia(c)
+        elegidos = []
+        for r in puntajes[:k]:
+            score, vencida, iso = _penalizar(r[0] / 100, str(r[2]), vig)
+            if fresh_only and vencida:
+                continue
+            elegidos.append({"_id": r[1], "path": r[2], "ord": r[3], "heading": r[4],
+                             "chunk_type": r[6], "score": score,
+                             "vencida": vencida, "stale_after": iso})
         return _con_texto(c, elegidos)
     try:
         mat = np.frombuffer(b"".join(r[6] for r in filas), dtype=np.float32).reshape(len(filas), -1)
@@ -922,6 +967,7 @@ def _buscar_con(c: sqlite3.Connection, query: str, k: int, alpha: float) -> list
     candidatos = set(por_chunk) | {int(filas[i][0]) for i in top_sem}
 
     out = []
+    vig = _mapa_vigencia(c)
     for cid in candidatos:
         pos = por_id.get(cid)
         if pos is None:
@@ -942,9 +988,13 @@ def _buscar_con(c: sqlite3.Connection, query: str, k: int, alpha: float) -> list
             score += 0.15
         elif hl == 2:
             score += 0.10
+        score, vencida, iso = _penalizar(score, path, vig)
+        if fresh_only and vencida:
+            continue
         out.append({"path": path, "ord": o, "heading": h, "hlevel": hl,
                     "chunk_type": ct, "score": score, "sem": sem,
-                    "_cob": cobertura, "_nota": nota_cob.get(path, 0.0), "_id": cid})
+                    "_cob": cobertura, "_nota": nota_cob.get(path, 0.0), "_id": cid,
+                    "vencida": vencida, "stale_after": iso})
     out.sort(key=lambda x: -x["score"])
 
     # 1) La NOTA cubre buena parte de lo específico de la consulta (aunque sea entre

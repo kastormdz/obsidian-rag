@@ -27,3 +27,8 @@ EMBEDDINGS_CACHE = Path(
 )
 
 MODELO = os.environ.get("OBS_RAG_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+
+# Cuánto pierde una nota vencida frente a una vigente en el ranking. 1.0 = no penaliza;
+# 0.0 = la esconde (peor: devuelve "no encontrado"). Se sube si el banco muestra que
+# esconde notas buenas.
+STALE_PENALTY = max(0.0, min(1.0, float(os.environ.get("OBS_RAG_STALE_PENALTY", "0.75"))))
