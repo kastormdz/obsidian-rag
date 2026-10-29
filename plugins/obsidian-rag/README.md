@@ -91,5 +91,5 @@ funciona acá sin tocar el plugin.
 
 ```bash
 hermes plugins doctor plugins/obsidian-rag --ci   # manifiesto + registro + drift
-python3 tests/e2e_plugin.py                       # 30 chequeos contra un vault temporal
+python3 tests/e2e_plugin.py                       # 34 chequeos contra un vault temporal
 ```

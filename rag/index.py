@@ -25,7 +25,8 @@ import re
 import sqlite3
 import sys
 import time
-from typing import Any, Optional
+from contextlib import contextmanager
+from typing import Any, Iterator, Optional
 
 from .config import DB as _CONFIG_DB, MODELO, VAULT as _CONFIG_VAULT, EMBEDDINGS_CACHE
 from .vault import dentro_del_vault
@@ -126,6 +127,16 @@ def conn() -> sqlite3.Connection:
 
 
 _INICIALIZADAS: set[str] = set()
+
+
+@contextmanager
+def _conexion() -> Iterator[sqlite3.Connection]:
+    """Conexión que se cierra al salir. `with sqlite3.connect(...)` NO cierra: commitea."""
+    c = conn()
+    try:
+        yield c
+    finally:
+        c.close()
 
 
 def _migrar_sin_texto(c: sqlite3.Connection) -> None:
@@ -497,7 +508,13 @@ def leer_nota(abs_: str) -> str:
 
 
 def build(force: bool = False) -> None:
-    c = conn()
+    # La conexión se cierra sola: `with sqlite3.connect(...)` NO cierra, sólo commitea, así
+    # que cada build/search dejaba un descriptor abierto hasta que el GC lo recogiera.
+    with _conexion() as c:
+        _build_con(c, force)
+
+
+def _build_con(c: sqlite3.Connection, force: bool) -> None:
     # Estas dos guardias van ANTES de tocar `meta`: si el vault está mal apuntado, el
     # índice tiene que quedar como estaba, no en estado "building".
     if not os.path.isdir(VAULT):
@@ -751,7 +768,11 @@ def search(query: str, k: int = 5, alpha: float = 0.6) -> list[dict]:
     # `status` diría "0 notas" en vez de "no hay índice, corré obsn reindex".
     if not os.path.exists(DB):
         return []
-    c = conn()
+    with _conexion() as c:
+        return _buscar_con(c, query, k, alpha)
+
+
+def _buscar_con(c: sqlite3.Connection, query: str, k: int, alpha: float) -> list[dict]:
     import math
 
     total_chunks = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
@@ -973,11 +994,11 @@ def _main() -> None:
     if cmd == "build":
         build(force="--force" in sys.argv)
     elif cmd == "status":
-        c = conn()
-        n = c.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
-        ch = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-        vec = c.execute("SELECT COUNT(*) FROM chunks WHERE vec IS NOT NULL").fetchone()[0]
-        last = c.execute("SELECT MAX(indexed_at) FROM notes").fetchone()[0]
+        with _conexion() as c:
+            n = c.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+            ch = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            vec = c.execute("SELECT COUNT(*) FROM chunks WHERE vec IS NOT NULL").fetchone()[0]
+            last = c.execute("SELECT MAX(indexed_at) FROM notes").fetchone()[0]
         print(f"notas={n} chunks={ch} con_embedding={vec} "
               f"ultimo_index={time.strftime('%Y-%m-%d %H:%M', time.localtime(last)) if last else 'nunca'}")
     elif cmd == "search":

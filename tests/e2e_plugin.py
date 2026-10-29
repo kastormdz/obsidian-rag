@@ -110,6 +110,26 @@ def main():
     check("search exact encuentra la nota personal",
           e.get("ok") and [x["path"] for x in e["hits"]] == ["02-Personal/viaje.md"], e.get("hits"))
 
+    # --- híbrido + folder: filtra de verdad (antes lo ignoraba en silencio)
+    sin_filtro = call("vault_search", {"query": "keycloak openldap", "limit": 5})
+    check("sin folder hay hits fuera de 02-Personal",
+          any(not x["path"].startswith("02-Personal/") for x in sin_filtro["hits"]),
+          str([x["path"] for x in sin_filtro["hits"]]))
+    hf = call("vault_search", {"query": "keycloak openldap", "folder": "02-Personal"})
+    check("hybrid con folder excluye las otras carpetas",
+          hf.get("ok") and hf.get("folder") == "02-Personal"
+          and all(x["path"].startswith("02-Personal/") for x in hf["hits"]),
+          str(hf.get("hits")))
+    hf2 = call("vault_search", {"query": "keycloak openldap", "folder": "01-Infra"})
+    check("hybrid con folder devuelve notas de esa carpeta",
+          hf2.get("ok") and hf2["hits"] and all(x["path"].startswith("01-Infra/") for x in hf2["hits"]),
+          str([x["path"] for x in hf2.get("hits", [])]))
+
+    # --- híbrido + tag: se rechaza con un mensaje accionable (no finge filtrar)
+    ht = call("vault_search", {"query": "keycloak", "tag": "infra"})
+    check("hybrid con tag se rechaza claro",
+          ht.get("ok") is False and "mode=exact" in ht.get("error", ""), ht.get("error", "")[:70])
+
     # --- read
     rd = call("vault_read", {"path": "01-Infra/keycloak.md"})
     check("read devuelve el contenido", rd.get("ok") and "OpenLDAP" in rd.get("content", ""), f"{rd.get('chars')} chars")

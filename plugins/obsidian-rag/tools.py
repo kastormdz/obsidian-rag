@@ -46,13 +46,15 @@ def search(args: dict, **kwargs) -> str:
             return _fail(ValueError("query vacía"))
         limit = _int(args.get("limit"), 8, 1, MAX_SEARCH)
         mode = args.get("mode") or "hybrid"
+        folder = _clean(args.get("folder")).rstrip("/")
+        tag = str(args.get("tag") or "").lstrip("#")
 
         if mode == "exact":
             flags = ["--limit", str(limit)]
-            if args.get("folder"):
-                flags += ["--folder", _clean(args["folder"]).rstrip("/")]
-            if args.get("tag"):
-                flags += ["--tag", str(args["tag"]).lstrip("#")]
+            if folder:
+                flags += ["--folder", folder]
+            if tag:
+                flags += ["--tag", tag]
             rows = client.run("search", query, flags=flags, want_json=True)
             hits = [
                 {"path": r.get("path"), "matches": r.get("matches"),
@@ -60,15 +62,25 @@ def search(args: dict, **kwargs) -> str:
                 for r in rows
             ]
         else:
+            # En híbrido el filtro por tag no existe: el índice no guarda tags, y fingir
+            # que se aplicó es peor que decir que no. El de carpeta sí: es prefijo de path.
+            if tag:
+                return _fail(ValueError(
+                    "mode=hybrid no filtra por tag (el índice no guarda tags). Usá "
+                    "mode=exact con tag, o vault_list para ubicar la carpeta y filtrá por folder."
+                ))
             # Se piden MÁS chunks que notas queridas: `rag` devuelve chunks y acá se
             # deduplica por path. Pidiendo `limit` pelado, una nota con varios chunks
-            # ganadores dejaba la respuesta en 1 o 2 notas aunque se pidieran 5.
-            pedir = min(limit * 3, 50)
+            # ganadores dejaba la respuesta en 1 o 2 notas aunque se pidieran 5. Con folder
+            # se pide más margen, porque el filtro se aplica después de deduplicar.
+            pedir = min(limit * (5 if folder else 3), 60)
             rows = client.run("rag", query, str(pedir), want_json=True)
             hits, seen = [], set()
             for r in rows:
-                path = r.get("path")
+                path = r.get("path") or ""
                 if path in seen:  # one row per chunk; the model only needs the best one per note
+                    continue
+                if folder and not path.startswith(folder + "/"):
                     continue
                 seen.add(path)
                 hits.append({
@@ -81,6 +93,8 @@ def search(args: dict, **kwargs) -> str:
                     break
 
         payload = {"mode": mode, "query": query, "count": len(hits), "hits": hits}
+        if folder:
+            payload["folder"] = folder
         if not hits:
             payload["note"] = (
                 "Sin resultados. Probá mode=exact con un término literal que aparezca en el "

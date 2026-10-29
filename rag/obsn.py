@@ -26,6 +26,7 @@ Variables de entorno: OBS_RAG_VAULT, OBS_RAG_INDEX, OBS_RAG_CACHE, OBS_RAG_MODEL
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import subprocess
@@ -140,7 +141,7 @@ def cmd_status(args: argparse.Namespace) -> None:
 
     if not config.DB.exists():
         raise SystemExit(f"no hay índice en {config.DB}: corré `obsn reindex`")
-    with sqlite3.connect(config.DB) as c:
+    with contextlib.closing(sqlite3.connect(config.DB)) as c:
         # `notes` es la fuente de verdad de lo indexado. Contar paths distintos en
         # `chunks` subcuenta: una nota sin cuerpo (solo frontmatter, o <20 chars) no
         # genera chunks y desaparecía del total (medido: 193 vs 196 reales).
