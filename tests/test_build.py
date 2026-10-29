@@ -210,5 +210,71 @@ class ErroresDeCli(unittest.TestCase):
         self.assertIn("notas=2", salida.getvalue())
 
 
+class VigenciaEnElIndice(unittest.TestCase):
+    """La vigencia se guarda normalizada y una DB con esquema viejo se migra sola."""
+
+    def setUp(self) -> None:
+        from rag import index as idx
+
+        self.idx = idx
+        self._dir = tempfile.TemporaryDirectory()
+        raiz = Path(self._dir.name)
+        self.vault = raiz / "vault"
+        self.vault.mkdir()
+        (self.vault / "con-fecha.md").write_text(
+            "---\nstale_after: 2026-12-31\nupdated: 2026-10-01\n---\n# Con fecha\n\ntexto\n",
+            encoding="utf-8",
+        )
+        (self.vault / "sin-fecha.md").write_text("# Sin fecha\n\ntexto\n", encoding="utf-8")
+
+        self._vault_previo, self._db_previo = idx.VAULT, idx.DB
+        self._embed_previo = idx.embed_all
+        idx.VAULT, idx.DB = str(self.vault), str(raiz / "index.db")
+        idx.embed_all = lambda textos, c, model=None: [None] * len(textos)
+        self._db = Path(idx.DB)
+
+    def tearDown(self) -> None:
+        idx = self.idx
+        idx.VAULT, idx.DB = self._vault_previo, self._db_previo
+        idx.embed_all = self._embed_previo
+        self._dir.cleanup()
+
+    def test_guarda_la_vigencia_y_deja_null_si_no_hay_fecha(self) -> None:
+        self.idx.build(force=True)
+        with sqlite3.connect(self.idx.DB) as c:
+            con = c.execute(
+                "SELECT stale_after, updated FROM notes WHERE path='con-fecha.md'"
+            ).fetchone()
+            sin = c.execute(
+                "SELECT stale_after, updated FROM notes WHERE path='sin-fecha.md'"
+            ).fetchone()
+        # El instante exacto depende de la tz del sistema (CI corre en UTC): se exige
+        # que caiga al final de ese día y no medianoche, que es la semántica acordada.
+        self.assertIn(con[0][:10], ("2026-12-31", "2027-01-01"), con[0])
+        # misma regla para `updated`: fecha sin hora = final de ese día en la tz local
+        self.assertIn(con[1][:10], ("2026-10-01", "2026-10-02"), con[1])
+        self.assertIsNone(sin[0])
+        self.assertIsNone(sin[1])
+
+    def test_migra_un_esquema_viejo_y_lo_rellena(self) -> None:
+        # DB con el esquema anterior a esta feature
+        with sqlite3.connect(self.idx.DB) as c:
+            c.execute(
+                "CREATE TABLE notes (path TEXT PRIMARY KEY, mtime REAL, size INTEGER,"
+                " hash TEXT, n_chunks INTEGER, indexed_at REAL)"
+            )
+            c.execute("INSERT INTO notes VALUES ('con-fecha.md', 0, 1, 'h', 1, 0)")
+            c.commit()
+        self.idx.build(force=False)  # conecta => migra y fuerza rebuild por la meta
+        with sqlite3.connect(self.idx.DB) as c:
+            cols = {r[1] for r in c.execute("PRAGMA table_info(notes)")}
+            fila = c.execute(
+                "SELECT stale_after FROM notes WHERE path='con-fecha.md'"
+            ).fetchone()
+        self.assertIn("stale_after", cols)
+        self.assertIn("updated", cols)
+        self.assertIsNotNone(fila[0], "el rebuild tiene que haber rellenado la columna")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -205,6 +205,11 @@ def _frontmatter(texto: str) -> dict[str, Any]:
     return datos
 
 
+def frontmatter(texto: str) -> dict[str, Any]:
+    """Frontmatter como dict. Alias público de `_frontmatter` para otros módulos."""
+    return _frontmatter(texto)
+
+
 def _tags_del_texto(texto: str) -> set[str]:
     """Tags inline, sin los `#` de bloques de código (`#!/bin/bash`, comentarios de YAML).
 

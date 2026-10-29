@@ -29,7 +29,8 @@ from contextlib import contextmanager
 from typing import Any, Iterator, Optional
 
 from .config import DB as _CONFIG_DB, MODELO, VAULT as _CONFIG_VAULT, EMBEDDINGS_CACHE
-from .vault import dentro_del_vault
+from .vault import dentro_del_vault, frontmatter
+from .vigencia import vigencia
 
 DB = str(_CONFIG_DB)
 # El vault vive descifrado en disco. El índice se construye desde el filesystem:
@@ -48,7 +49,9 @@ CREATE TABLE IF NOT EXISTS notes (
     size        INTEGER,
     hash        TEXT,        -- sha1 del contenido: señal fiable de "cambió"
     n_chunks    INTEGER DEFAULT 0,
-    indexed_at  REAL
+    indexed_at  REAL,
+    stale_after TEXT,       -- ISO 8601 UTC del frontmatter; NULL = sin fecha declarada
+    updated     TEXT        -- ISO 8601 UTC del frontmatter; informativo, no puntúa
 );
 
 CREATE TABLE IF NOT EXISTS chunks (
@@ -172,7 +175,8 @@ def _ensure_columns(c: sqlite3.Connection) -> None:
     """
     expected = {
         "notes": [("hash", "TEXT"), ("mtime", "REAL"), ("size", "INTEGER"),
-                  ("n_chunks", "INTEGER"), ("indexed_at", "REAL")],
+                  ("n_chunks", "INTEGER"), ("indexed_at", "REAL"),
+                  ("stale_after", "TEXT"), ("updated", "TEXT")],
         "chunks": [("n_tok", "INTEGER"), ("off_start", "INTEGER"), ("off_end", "INTEGER")],
         "emb": [("modelo", "TEXT")],
     }
@@ -522,13 +526,15 @@ def _build_con(c: sqlite3.Connection, force: bool) -> None:
             f"no existe el vault {VAULT}: revisá OBS_RAG_VAULT (tiene que ser la carpeta "
             "que contiene .obsidian/)"
         )
-    # El índice sabe con qué criterio se troceó y con qué modelo se embebió. Si
-    # cambió cualquiera de los dos, el índice viejo NO sirve aunque el hash de la
-    # nota sea idéntico: hay que reconstruirlo entero.
+    # El índice sabe con qué criterio se troceó, con qué modelo se embebió y si ya
+    # guardó la vigencia de cada nota. Si cambió cualquiera de los tres, el índice
+    # viejo NO sirve aunque el hash de la nota sea idéntico: se reconstruye entero.
     if not force:
-        if (_meta(c, "chunker") != str(CHUNKER_VERSION)) or (_meta(c, "modelo") != MODELO):
-            print("[build] criterio de indexado o modelo distinto al del índice: rebuild completo",
-                  flush=True)
+        if ((_meta(c, "chunker") != str(CHUNKER_VERSION))
+                or (_meta(c, "modelo") != MODELO)
+                or (_meta(c, "vigencia") != "1")):
+            print("[build] criterio de indexado, modelo o vigencia distinto al del índice:"
+                  " rebuild completo", flush=True)
             force = True
     notes = listar_notas()
     # Un vault mal apuntado devuelve cero notas, y el purgado de abajo borraría el índice
@@ -643,10 +649,12 @@ def _build_con(c: sqlite3.Connection, force: bool) -> None:
                     pendientes,
                 )
             chash = hashlib.sha1(body.encode("utf-8", "replace")).hexdigest()
+            vig = vigencia(frontmatter(body))
             c.execute(
-                "INSERT OR REPLACE INTO notes (path, mtime, size, hash, n_chunks, indexed_at)"
-                " VALUES (?,?,?,?,?,?)",
-                (path, mt, len(body), chash, len(chunks), time.time()),
+                "INSERT OR REPLACE INTO notes (path, mtime, size, hash, n_chunks, indexed_at,"
+                " stale_after, updated) VALUES (?,?,?,?,?,?,?,?)",
+                (path, mt, len(body), chash, len(chunks), time.time(),
+                 vig["stale_after"], vig["updated"]),
             )
             c.execute("RELEASE nota")
             c.commit()
@@ -693,6 +701,7 @@ def _build_con(c: sqlite3.Connection, force: bool) -> None:
     _set_meta(c, "chunker", CHUNKER_VERSION)
     _set_meta(c, "modelo", MODELO)
     _set_meta(c, "normalizado", "1")
+    _set_meta(c, "vigencia", "1")
     _set_meta(c, "indexado", time.time())
     _set_meta(c, "estado", "ready")
     c.commit()
