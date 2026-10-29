@@ -65,3 +65,18 @@ def resumen(vencidas: int, sin_fecha: int, total: int) -> str:
     """Línea corta para `status`: se dice el total además del detalle."""
     partes = [f"{vencidas} vencidas", f"{sin_fecha} sin fecha"]
     return f"{total} notas ({', '.join(partes)})"
+
+
+def fecha_local(iso: Optional[str], tz: Optional[str] = None) -> str:
+    """ISO UTC -> `YYYY-MM-DD` en la zona local (o en `tz` si se pasa).
+
+    Se guarda en UTC, pero se muestra en local: si no, un `stale_after: 2026-01-15`
+    escrito en -03 se leería como 2026-01-16 y parecería un día de más.
+    """
+    if not iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso)
+    except ValueError:
+        return iso[:10]
+    return dt.astimezone(ZoneInfo(tz) if tz else None).strftime("%Y-%m-%d")

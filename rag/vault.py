@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .config import VAULT  # una sola fuente de la ruta del vault
+from .vigencia import fecha_local, vigencia
 
 EXCLUIDAS = {".obsidian", ".trash", ".git", ".stfolder", ".DS_Store"}
 
@@ -428,8 +429,16 @@ def get_note_metadata(path: str) -> str:
         f"tags: {', '.join(sorted(str(t) for t in tags)) if tags else '(ninguno)'}",
     ]
     for clave, valor in datos.items():
-        if clave != "tags":
+        if clave not in ("tags", "stale_after", "updated"):
             lineas.append(f"{clave}: {valor}")
+    v = vigencia(datos)
+    if v["stale_after"]:
+        estado = (f"VENCIDA hace {v['dias_vencida']} días" if v["vencida"] else "vigente")
+        lineas.append(f"vigencia: {estado} (vence {fecha_local(v['stale_after'])})")
+    else:
+        lineas.append("vigencia: sin fecha declarada")
+    if v["updated"]:
+        lineas.append(f"actualizado: {fecha_local(v['updated'])}")
     lineas.append(f"enlaces salientes: {len(enlaces)}")
     lineas.append(f"backlinks: {len(backlinks)}" + (f" -> {', '.join(backlinks[:8])}" if backlinks else ""))
     return "\n".join(lineas)

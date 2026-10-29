@@ -77,3 +77,12 @@ class Veredicto(unittest.TestCase):
 
     def test_resumen_dice_el_total(self):
         self.assertIn("203", resumen(12, 5, 203))
+
+    def test_fecha_local_no_corre_el_dia(self):
+        # guardado en UTC, mostrado en local: 2026-01-16T02:59:59Z es el 15 en -03
+        from rag.vigencia import fecha_local
+        self.assertEqual(
+            fecha_local("2026-01-16T02:59:59+00:00", tz="America/Argentina/Buenos_Aires"),
+            "2026-01-15",
+        )
+        self.assertEqual(fecha_local("2026-01-16T02:59:59+00:00", tz="UTC"), "2026-01-16")

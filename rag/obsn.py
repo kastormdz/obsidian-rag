@@ -92,7 +92,7 @@ def _confirmar(pregunta: str, opciones: argparse.Namespace) -> bool:
 def cmd_rag(args: argparse.Namespace) -> None:
     from . import index
 
-    resultados = index.search(args.query, args.n)
+    resultados = index.search(args.query, args.n, fresh_only=args.fresh_only)
     if args.json:
         _json(resultados)
         return
@@ -100,7 +100,17 @@ def cmd_rag(args: argparse.Namespace) -> None:
         print("(sin resultados: probá otras palabras o corré `obsn reindex`)")
         return
     for i, r in enumerate(resultados, 1):
-        print(f"{i}. {r['path']}  ·  {r.get('heading', '')}  ·  score {r.get('score', 0):.3f}")
+        marca = ""
+        if r.get("vencida"):
+            dias = ""
+            try:
+                from datetime import datetime, timezone
+                dias = f", hace {(datetime.now(timezone.utc) - datetime.fromisoformat(r['stale_after'])).days} días"
+            except (TypeError, ValueError):
+                pass
+            marca = f"  [VENCIDA{dias}]"
+        print(f"{i}. {r['path']}  ·  {r.get('heading', '')}  ·  "
+              f"score {r.get('score', 0):.3f}{marca}")
 
 
 def cmd_search(args: argparse.Namespace) -> None:
@@ -135,7 +145,7 @@ def cmd_upgrade(args: argparse.Namespace) -> None:
 def cmd_status(args: argparse.Namespace) -> None:
     import sqlite3
     import time
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     from . import config
 
@@ -158,6 +168,10 @@ def cmd_status(args: argparse.Namespace) -> None:
         sin_chunks = c.execute(
             "SELECT COUNT(*) FROM notes WHERE COALESCE(n_chunks, 0) = 0"
         ).fetchone()[0]
+        try:
+            vigencias = [r[0] for r in c.execute("SELECT stale_after FROM notes")]
+        except sqlite3.OperationalError:      # índice anterior a la vigencia
+            vigencias = []
         # Cuándo se indexó y en qué estado quedó: los datos ya estaban en `meta`, pero no se
         # exponían, así que un agente no podía distinguir un índice fresco de uno viejo, ni
         # un build fallido de uno que nunca corrió. La tabla es `meta(k, v)`: con nombres
@@ -176,6 +190,23 @@ def cmd_status(args: argparse.Namespace) -> None:
             indexado = datetime.fromtimestamp(sello).astimezone().isoformat(timespec="seconds")
             antiguedad = max(0, int((time.time() - sello) / 60))
     estado = filas.get("estado") or "desconocido"
+    # La vigencia se cuenta en Python: las fechas están en ISO UTC y comparar strings
+    # con offsets distintos daría un orden falso.
+    vencidas = sin_fecha = por_vencer = 0
+    ahora = datetime.now(timezone.utc)
+    for iso in vigencias:
+        if not iso:
+            sin_fecha += 1
+            continue
+        try:
+            vence = datetime.fromisoformat(iso)
+        except ValueError:
+            sin_fecha += 1
+            continue
+        if ahora >= vence:
+            vencidas += 1
+        elif (vence - ahora).days < 7:
+            por_vencer += 1
     datos = {
         "indice": str(config.DB),
         "vault": str(config.VAULT),
@@ -183,6 +214,9 @@ def cmd_status(args: argparse.Namespace) -> None:
         "chunks": chunks,
         "con_embedding": con_vec,
         "sin_chunks": sin_chunks,
+        "vencidas": vencidas,
+        "sin_fecha": sin_fecha,
+        "por_vencer_7d": por_vencer,
         "modelo": config.MODELO,
         "indexado": indexado,
         "antiguedad_min": antiguedad,
@@ -194,11 +228,54 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(
         f"notas={datos['notas']} chunks={datos['chunks']} "
         f"con_embedding={datos['con_embedding']} sin_chunks={datos['sin_chunks']} "
-        f"estado={estado}\n"
+        f"vencidas={vencidas} sin_fecha={sin_fecha} estado={estado}\n"
         f"vault={datos['vault']}\nindice={datos['indice']}"
     )
     if indexado:
         print(f"indexado={indexado} (hace {antiguedad} min)")
+    if por_vencer:
+        print(f"por vencer en 7 días: {por_vencer}")
+
+
+def cmd_stale(args: argparse.Namespace) -> None:
+    """Lista las notas cuya `stale_after` ya pasó. Sin índice no inventa: avisa."""
+    import sqlite3
+    from datetime import datetime, timezone
+
+    from . import config
+    from .vigencia import fecha_local
+
+    if not config.DB.exists():
+        raise SystemExit(f"no hay índice en {config.DB}: corré `obsn reindex`")
+    ahora = datetime.now(timezone.utc)
+    filas: list[dict] = []
+    with contextlib.closing(sqlite3.connect(config.DB)) as c:
+        try:
+            pares = list(c.execute(
+                "SELECT path, stale_after FROM notes WHERE stale_after IS NOT NULL"))
+            total = c.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+        except sqlite3.OperationalError:
+            raise SystemExit(
+                "el índice no tiene la columna de vigencia: corré `obsn reindex`") from None
+    for path, iso in pares:
+        try:
+            vence = datetime.fromisoformat(iso)
+        except ValueError:
+            continue
+        if ahora >= vence:
+            dias = (ahora - vence).days
+            if args.days is None or dias >= args.days:
+                filas.append({"path": path, "stale_after": fecha_local(iso), "dias": dias})
+    filas.sort(key=lambda r: -r["dias"])
+    if args.json:
+        _json({"vencidas": filas, "total_notas": total})
+        return
+    if not filas:
+        print(f"(ninguna nota vencida de {total})")
+        return
+    for f in filas:
+        print(f"{f['stale_after']}  hace {f['dias']:>4} días  {f['path']}")
+    print(f"\n{len(filas)} vencidas de {total} notas")
 
 
 def cmd_graph(args: argparse.Namespace) -> None:
@@ -293,6 +370,8 @@ def construir_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("rag", help="búsqueda semántica")
     p.add_argument("query")
     p.add_argument("n", nargs="?", type=int, default=5)
+    p.add_argument("--fresh-only", action="store_true",
+                   help="sólo notas vigentes (descarta las vencidas por stale_after)")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_rag)
 
@@ -311,6 +390,12 @@ def construir_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("status", help="estado del índice")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("stale", help="notas vencidas por stale_after")
+    p.add_argument("--days", type=int, default=None,
+                   help="sólo las que vencieron hace N días o más")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_stale)
 
     p = sub.add_parser("upgrade", help="actualizar el paquete desde su repo git")
     p.add_argument("--check", action="store_true",
