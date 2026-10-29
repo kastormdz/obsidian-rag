@@ -187,21 +187,25 @@ class ErroresDeCli(unittest.TestCase):
         import contextlib
         import io
 
-        from rag import config, obsn
+        from rag import config, obsn, vault as vault_mod
 
         with tempfile.TemporaryDirectory() as tmp:
             vault = Path(tmp) / "vault"
             vault.mkdir()
             (vault / "uno.md").write_text("# Uno\n\nVease [[dos]].\n", encoding="utf-8")
             (vault / "dos.md").write_text("# Dos\n\nNada que enlazar.\n", encoding="utf-8")
-            previo = config.VAULT
-            config.VAULT = vault
+            # `vault.py` hace `from .config import VAULT` al importarse: parchear sólo
+            # `config.VAULT` funciona o no según qué test importó `rag.vault` primero. En CI
+            # ya venía importado, el grafo caminaba el vault real (inexistente) y el test
+            # pasaba por el camino equivocado: "el índice está vacío".
+            previo_cfg, previo_vault = config.VAULT, vault_mod.VAULT
+            config.VAULT = vault_mod.VAULT = vault
             try:
                 salida = io.StringIO()
                 with contextlib.redirect_stdout(salida):
                     rc = obsn.main(["graph", "--stats"])
             finally:
-                config.VAULT = previo
+                config.VAULT, vault_mod.VAULT = previo_cfg, previo_vault
         self.assertEqual(rc, 0)
         self.assertIn("notas=2", salida.getvalue())
 
