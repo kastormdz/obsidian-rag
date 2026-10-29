@@ -12,6 +12,13 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ### Fixed
 
+- **Filtros del plugin en híbrido**: `vault_search` ignoraba `folder` y `tag` en silencio, así
+  que el modelo creía haber filtrado. `folder` ahora filtra de verdad (prefijo de path, con
+  sobre-muestreo porque el filtro va después de deduplicar) y `tag` se rechaza con un mensaje
+  accionable: el índice no guarda tags.
+- **Conexiones sqlite**: `build`, `search`, `_main` y `cmd_status` las dejaban abiertas
+  (`with sqlite3.connect(...)` commitea, no cierra). Ahora hay un `_conexion()` que cierra en
+  `finally`; la suite corre con `-W error::ResourceWarning` sin fallar.
 - **Chunker (ARG-01)**: un encabezado seguido de línea en blanco se fusionaba con la sección
   ANTERIOR, así que la sección nueva perdía su `heading` y sus términos no entraban como
   `in_meta`. En el vault real eran **366 secciones en 104 de 203 notas**; ahora quedan 13 en
