@@ -8,6 +8,8 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-29
+
 ### Added
 
 - Banner de cabecera en `docs/banner.webp` (1600×533, 38 KB en WebP), arriba del título en los

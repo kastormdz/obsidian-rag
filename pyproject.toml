@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "obsidian-rag"
-version = "0.4.0"
+version = "0.4.1"
 description = "Búsqueda semántica y operaciones de archivo sobre un vault de Obsidian"
 readme = "README.md"
 requires-python = ">=3.10"
