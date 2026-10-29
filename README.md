@@ -317,7 +317,8 @@ de Hermes, la skill viaja con él y no hace falta copiarla.
 python -m unittest discover -s tests -t .
 ```
 
-72 tests contra vaults temporales. No tocan ningún vault real.
+Toda la suite corre contra vaults temporales: no tocan ningún vault real. Hoy son más de
+noventa, y el número exacto lo imprime el propio comando.
 
 El plugin de Hermes tiene su propio E2E, que lo carga como lo hace Hermes y ejercita los
 siete tools contra un vault temporal:

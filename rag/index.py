@@ -701,13 +701,6 @@ def tok(s: str) -> list[str]:
     return _TOK.findall(s.lower())
 
 
-def key_terms(s: str) -> list[str]:
-    """Tokens con contenido (sin stopwords). Si todo es stopword, usa todos."""
-    t = _TOK.findall(s.lower())
-    keep = [w for w in t if w not in _STOP and len(w) > 1]
-    return keep or t
-
-
 def _texto_del_chunk(path: str, inicio: int | None, fin: int | None) -> str:
     """Relee el chunk del vault por su rango de líneas: el índice no guarda el texto."""
     if inicio is None or fin is None:
@@ -769,8 +762,8 @@ def search(query: str, k: int = 5, alpha: float = 0.6) -> list[dict]:
         return []
     # Los términos CON CONTENIDO (sin stopwords) son los que definen el sujeto de la
     # búsqueda: si no, "no" puede ser el más específico y la cobertura deja de filtrar.
-    # Sin fallback a "todos los tokens": `key_terms` devolvía las stopwords cuando la
-    # consulta era sólo stopwords, y el piso de cobertura dejaba pasar ruido con eso.
+    # Sin fallback a "todos los tokens": cuando la consulta es sólo stopwords no hay sujeto
+    # que buscar, y el piso de cobertura dejaba pasar ruido con eso.
     key_set = {w for w in tok(query) if w not in _STOP and len(w) > 1}
     if not key_set:
         return []

@@ -318,7 +318,8 @@ installed, the skill ships with it and there is nothing to copy.
 python -m unittest discover -s tests -t .
 ```
 
-72 tests against temporary vaults. They never touch a real vault.
+The whole suite runs against temporary vaults: it never touches a real one. There are more
+than ninety today, and the exact number is printed by the command itself.
 
 The Hermes plugin has its own E2E, which loads it the way Hermes does and exercises all seven
 tools against a temporary vault:
