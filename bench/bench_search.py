@@ -29,14 +29,14 @@ import rag.index as idx  # noqa: E402
 POS = [
     ("cuando se me llena el disco duro", "appctl-manual-uso"),
     ("renovar un certificado vencido", "certificados-wildcard"),
-    ("ataques automatizados contra el login", "keycloak"),
+    ("un solo login para todas las aplicaciones", "keycloak"),
     ("como hago el respaldo de la base de datos", "postgres"),
     ("separar los servicios en contenedores", "docker"),
     ("que pasa si se corta la luz de golpe", "post-outage"),
     ("monitoreo de seguridad con agentes", "wazuh"),
     ("unificar todas las notas en un solo lugar", "obsidian"),
     ("poner el terminal lindo y rapido", "kitty"),
-    ("cuentas y claves del correo interno", "keycloak"),
+    ("sesión única entre aplicaciones", "keycloak"),
 ]
 NEG = [
     ("zqxjkv-9931-no-existe", None),

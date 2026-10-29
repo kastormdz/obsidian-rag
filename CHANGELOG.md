@@ -12,6 +12,9 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ### Fixed
 
+- **Fixtures de los tests**: los ejemplos usan `alpha`/`beta`/`gamma` sobre `192.0.2.0/24`, el
+  rango reservado para documentación (RFC 5737), y notas de contenido genérico. Dos consultas del
+  banco se reformularon; los números de referencia quedaron en top-1 4/10 y top-5 5/10.
 - **Filtros del plugin en híbrido**: `vault_search` ignoraba `folder` y `tag` en silencio, así
   que el modelo creía haber filtrado. `folder` ahora filtra de verdad (prefijo de path, con
   sobre-muestreo porque el filtro va después de deduplicar) y `tag` se rechaza con un mensaje

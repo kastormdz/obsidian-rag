@@ -2,14 +2,13 @@
 
 [![CI](https://github.com/kastormdz/obsidian-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/kastormdz/obsidian-rag/actions/workflows/ci.yml)
 
-Busca y edita un vault de [Obsidian](https://obsidian.md) desde la terminal, con un solo
-binario: `obsn`. Lee las notas del disco y arma un índice SQLite con embeddings. No hace
-falta servidor ni cuenta: el índice es un archivo. El vault sigue siendo markdown en tu
-disco.
+Search and edit an [Obsidian](https://obsidian.md) vault from the terminal, with a single
+binary: `obsn`. It reads the notes from disk and builds a local SQLite index with embeddings.
+No server and no account: the index is a file. The vault stays as markdown on your disk.
 
-[English version](README.en.md)
+[Versión en español](README.es.md)
 
-## Instalación
+## Install
 
 ```bash
 git clone https://github.com/kastormdz/obsidian-rag.git
@@ -18,298 +17,297 @@ python -m venv .venv && . .venv/bin/activate
 pip install -e .
 ```
 
-La primera búsqueda baja el modelo (241 MB) a `~/.cache/fastembed`. Cargarlo cuesta 1,5 s y
-sólo pasa cuando la consulta no se resuelve por léxico.
+The first search downloads the model (241 MB) into `~/.cache/fastembed`. Loading it costs
+1.5 s, and it only happens when the query cannot be resolved lexically.
 
-## Configurar el vault
+## Point it at your vault
 
-Por defecto busca el vault en `~/Obsidian`. Si el tuyo está ahí, no hay nada que hacer.
+By default it looks for the vault in `~/Obsidian`. If yours is there, you are done.
 
-Si está en otro lado, apuntá `OBS_RAG_VAULT` a la carpeta que contiene `.obsidian/`, es
-decir la raíz del vault. No es una subcarpeta y no es el nombre del vault: es el directorio.
+If it lives somewhere else, point `OBS_RAG_VAULT` at the folder that contains `.obsidian/`,
+which is the vault root. It is not a subfolder and not the vault name: it is the directory.
 
 ```bash
-export OBS_RAG_VAULT="$HOME/Documentos/mi-vault"                     # esta sesión
-echo 'export OBS_RAG_VAULT="$HOME/Documentos/mi-vault"' >> ~/.bashrc # permanente
+export OBS_RAG_VAULT="$HOME/Documents/my-vault"                     # this session
+echo 'export OBS_RAG_VAULT="$HOME/Documents/my-vault"' >> ~/.bashrc # permanent
 ```
 
-Para comprobar que quedó bien, `obsn status` imprime el vault y el índice que está usando:
+To check it took, `obsn status` prints the vault and the index it is using:
 
 ```
 $ obsn status
-notas=199 chunks=7651 con_embedding=7651 sin_chunks=3
-vault=/home/vos/Documentos/mi-vault
-indice=/home/vos/.local/share/obsidian-rag/index.db
+vault=/home/you/Documents/my-vault
+indice=/home/you/.local/share/obsidian-rag/index.db
 ```
 
-Dos cosas que se olvidan y cuestan una tarde:
+Three things that cost people an afternoon:
 
-- **El índice pertenece a un vault.** Los paths del índice son relativos a la raíz del vault.
-  Si cambiás `OBS_RAG_VAULT`, el índice viejo queda apuntando a notas que ya no existen: corré
-  `obsn reindex`, que purga lo que sobra e indexa lo nuevo. Va a tardar lo que tarda embeber
-  un vault entero, porque para el índice son todas notas nuevas.
-- **Un vault, un índice.** Para dos vaults, dale un archivo a cada uno:
-  `OBS_RAG_VAULT=~/otro OBS_RAG_INDEX=~/.local/share/obsidian-rag/otro.db obsn reindex`.
-- **Si el path está mal, no te vacía el índice.** `reindex` se niega cuando el vault no
-  existe, o cuando no tiene ninguna nota y el índice sí: te avisa para que revises
-  `OBS_RAG_VAULT` en vez de purgar 200 notas por un typo. Si querés vaciarlo a propósito,
-  `obsn reindex --force`.
+- The index belongs to one vault. Index paths are relative to the vault root. If you
+  change `OBS_RAG_VAULT`, the old index still points at notes that no longer exist: run
+  `obsn reindex`, which purges the leftovers and indexes the new ones. It will take as long as
+  embedding a whole vault, because to the index every note is new.
+- One vault, one index. For two vaults, give each one its own file:
+  `OBS_RAG_VAULT=~/other OBS_RAG_INDEX=~/.local/share/obsidian-rag/other.db obsn reindex`.
+- A wrong path will not empty your index. `reindex` refuses when the vault does not exist,
+  or when it has no notes while the index does: it tells you to check `OBS_RAG_VAULT` instead
+  of purging 200 notes over a typo. To empty it on purpose, `obsn reindex --force`.
 
-Si el reindex corre desde systemd, el servicio no hereda tu shell: la variable va en la
-unidad.
+If the reindex runs from systemd, the service does not inherit your shell: put the variable
+in the unit.
 
 ```ini
 [Service]
-Environment=OBS_RAG_VAULT=/home/vos/Documentos/mi-vault
+Environment=OBS_RAG_VAULT=/home/you/Documents/my-vault
 ```
 
-## Comandos
+## Commands
 
-Búsqueda:
+Search:
 
 ```bash
-obsn rag "certificados wildcard"    # híbrida: léxica + semántica
-obsn rag "backup" 10 --json         # cantidad de resultados y salida JSON
-obsn search certificados            # substring sobre el contenido, sin modelo
-obsn status                         # notas, chunks, vectores, modelo
-obsn reindex                        # incremental: sólo lo que cambió
-obsn reindex --force                # todo de nuevo
+obsn rag "wildcard certificates"    # hybrid: lexical + semantic
+obsn rag "backup" 10 --json         # result count and JSON output
+obsn search certificates            # substring over the content, no model
+obsn status                         # notes, chunks, vectors, model
+obsn reindex                        # incremental: only what changed
+obsn reindex --force                # everything again
 ```
 
-Archivos:
+Files:
 
 ```bash
-obsn read  "02-docs/nota.md"
-obsn write "02-docs/nueva.md" --file ~/tmp/nota.md
-obsn edit  "02-docs/nota.md" append --file ~/tmp/cola.md
-obsn delete "02-docs/vieja.md"      # a .trash; --hard borra de verdad
+obsn read  "02-docs/note.md"
+obsn write "02-docs/new.md" --file ~/tmp/note.md
+obsn edit  "02-docs/note.md" append --file ~/tmp/tail.md
+obsn delete "02-docs/old.md"        # to .trash; --hard really deletes
 obsn move  "02-docs/a.md" "02-docs/b.md"
 obsn list  "02-docs" --limit 20
 obsn folders
 obsn tags
-obsn meta  "02-docs/nota.md"        # frontmatter, tags, backlinks
+obsn meta  "02-docs/note.md"        # frontmatter, tags, backlinks
 ```
 
-Grafo:
+Graph:
 
 ```bash
-obsn graph --stats                  # resumen en una línea
-obsn graph --orphans                # notas sin links entrantes
-obsn graph --clusters               # islas y componentes
-obsn graph --broken                 # wikilinks que no resuelven
-obsn link --neighbors docker        # notas parecidas a un tema
-obsn link --propose                 # propone links nuevos, no escribe
-obsn link --apply                   # los escribe en las notas
+obsn graph --stats                  # one-line summary
+obsn graph --orphans                # notes with no incoming links
+obsn graph --clusters               # islands and components
+obsn graph --broken                 # wikilinks that resolve to nothing
+obsn link --neighbors docker        # notes close to a topic
+obsn link --propose                 # proposes new links, writes nothing
+obsn link --apply                   # writes them into the notes
 ```
 
-`link --apply` modifica tus notas. Corré `--propose` primero.
+`link --apply` modifies your notes. Run `--propose` first.
 
-Los nombres del estándar MCP (`read_note`, `write_note`, `search_notes`, `list_tags` y el
-resto) funcionan como alias, así un agente no tiene que traducir nada.
+The MCP standard names (`read_note`, `write_note`, `search_notes`, `list_tags` and the rest)
+work as aliases, so an agent does not have to translate anything.
 
-## Cómo busca
+## How search works
 
-`rag` mezcla dos señales en un solo score:
+`rag` blends two signals into a single score:
 
 ```
-0.6 · tf·idf  +  0.4 · coseno  +  0.35 · cobertura
+0.6 · tf·idf  +  0.4 · cosine  +  0.35 · coverage
 ```
 
-La cobertura se calcula por nota, no por chunk. Si tu consulta nombra cosas que están en
-secciones distintas de la misma nota, esa nota sube entera. También hay un empujón cuando el
-término aparece en el path o en el heading, porque un chunk que sólo dice "Primer deploy" no
-dice nada por sí solo.
+Coverage is measured per note, not per chunk. If your query names things that live in
+different sections of the same note, that note moves up as a whole. Terms that appear in the
+path or the heading get a boost, because a chunk that only says "First deploy" says nothing
+on its own.
 
-Antes de tocar un vector, la búsqueda intenta resolver con el índice invertido. Casi todas
-las consultas reales nombran algo que está escrito en alguna nota, y en ese caso no hay que
-traer 11 MB de vectores ni importar numpy: 70 ms de punta a punta contra 1,5 s si hay que
-cargar el modelo.
+Before touching a vector, the search tries to answer from the inverted index. Almost every
+real query names something that is written in some note, and in that case there is no need to
+pull 11 MB of vectors or import numpy: 70 ms end to end versus 1.5 s when the model has to
+load.
 
-Cuando no hay ninguna palabra de la consulta en el fragmento se exige coseno ≥ 0.62, y si no
-llega devuelve vacío. Una lista vacía es mejor que un resultado inventado.
+When none of the query words appear in the fragment, the cosine has to reach 0.62 or the
+result is dropped. An empty list beats an invented answer.
 
-`search` es otra cosa: substring sobre el texto, sin modelo. Sirve cuando sabés la palabra
-exacta y querés velocidad.
+`search` is a different tool: substring over the text, no model. Use it when you know the
+exact word and want speed.
 
-## El modelo de embeddings
+## The embedding model
 
-`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`. fastembed lo sirve como ONNX
-cuantizado (`qdrant/paraphrase-multilingual-MiniLM-L12-v2-onnx-Q`) y son 241 MB en
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`. fastembed serves it as a
+quantized ONNX build (`qdrant/paraphrase-multilingual-MiniLM-L12-v2-onnx-Q`), 241 MB in
 `~/.cache/fastembed`.
 
 | | |
 |---|---|
-| Dimensiones | 384 (`float32`, 1.536 B por chunk) |
-| Capas | 12 |
-| Idiomas | multilingüe, entrenado para español e inglés entre otros |
-| Motor | ONNX Runtime en CPU, sin torch |
-| En disco | 241 MB (224 del grafo + 16 del tokenizer) |
-| Cargarlo | ~1,5 s, y sólo cuando la consulta no se resuelve por léxico |
-| Embeber | ~38 chunks/s: un vault de 7.600 chunks, ~3 minutos |
-| Costo en el índice | 11,2 MB de vectores para 7.651 chunks |
+| Dimensions | 384 (`float32`, 1,536 B per chunk) |
+| Layers | 12 |
+| Languages | multilingual, trained on Spanish and English among others |
+| Runtime | ONNX Runtime on CPU, no torch |
+| On disk | 241 MB (224 graph + 16 tokenizer) |
+| Loading it | ~1.5 s, and only when the query is not resolved lexically |
+| Embedding | ~38 chunks/s on this CPU, so a full vault takes a few minutes |
+| Cost in the index | ~1.5 KB per chunk, almost all of it the 384-float vector |
 
-### Por qué éste
+### Why this one
 
-1. **Entiende español.** El vault está en español con términos técnicos en inglés. Un modelo
-   sólo-inglés pierde justo las paráfrasis, que es lo que un RAG tiene que resolver.
-2. **Corre en CPU sin GPU.** ONNX cuantizado y 12 capas: carga en 1,5 s y embebe el vault
-   entero en ~3 minutos. Un modelo más grande multiplica ese costo sin tocar el problema real.
-3. **384 dimensiones alcanzan.** Cada vector son 1.536 B y los 7.651 chunks ocupan 11,2 MB. Con
-   768 el índice duplica esa parte y la búsqueda tarda más, sin mejorar las consultas que
-   importan.
-4. **El techo está en el ranking, no en el modelo.** Con una paráfrasis que no comparte ninguna
-   palabra, el top-1 acierta 3 de 10; cuando la consulta trae el término exacto, 4 de 5. Por eso
-   la precisión la hace la cobertura IDF y el coseno es sólo una parte del score.
-5. **Probamos uno más grande y no entró.** `paraphrase-multilingual-mpnet-base-v2` (1,1 GB, 768
-   dims) murió por memoria (SIGKILL) antes de terminar el benchmark en esta máquina, así que
-   quedó afuera.
+1. It understands Spanish. The vault is in Spanish with English technical terms. An
+   English-only model loses exactly the paraphrases a RAG has to handle.
+2. It runs on CPU, no GPU. Quantized ONNX and 12 layers: 1.5 s to load and a few minutes to
+   embed a whole vault. A bigger model multiplies that cost without touching the real problem.
+3. 384 dimensions are enough. Each vector is 1,536 B and grows linearly with the chunk count.
+   At 768 that part of the index doubles and search gets slower, without improving the queries
+   that matter.
+4. The ceiling is the ranking, not the model. With a paraphrase that shares no words, top-1
+   hits 4 out of 10; when the query carries the exact term, 4 out of 5. That is why precision
+   comes from IDF coverage and the cosine is only one part of the score.
+5. A bigger model did not fit. `paraphrase-multilingual-mpnet-base-v2` (1.1 GB, 768 dims) died
+   out of memory (SIGKILL) before finishing the benchmark on this machine, so it stayed out.
 
-Para probar otro modelo sin tocar el índice:
+To try another model without touching the index:
 
 ```bash
 python bench/compare_models.py sentence-transformers/paraphrase-multilingual-mpnet-base-v2
 ```
 
-Mide sobre los chunks ya indexados: top-1 y top-5 en las paráfrasis, y el coseno máximo de las
-consultas fuera de dominio. Para adoptarlo, `OBS_RAG_MODEL=<modelo> obsn reindex --force`: el
-índice guarda el modelo en `meta` y se rehace solo, y la caché de vectores incluye el modelo,
-así que no reusa nada viejo.
+It measures against the chunks already indexed: top-1 and top-5 on the paraphrases, plus the
+highest cosine among out-of-domain queries. To adopt it, `OBS_RAG_MODEL=<model> obsn reindex
+--force`: the index stores the model in `meta` and rebuilds itself, and the vector cache key
+includes the model, so nothing stale is reused.
 
-## El índice
+## The index
 
-Se arma por hash del contenido. Un `touch` no lo engaña y una edición del mismo largo
-tampoco. `reindex` sin `--force` sólo toca lo que cambió, y tarda 0,1 s si no cambió nada.
+It is built from a content hash. A `touch` does not fool it, and neither does an edit that
+keeps the same length. `reindex` without `--force` only touches what changed, and takes 0.1 s
+when nothing did.
 
-Trocea por bloque: una tabla entera o una lista entera es un chunk. Antes era una fila por
-chunk, y con micro-trozos de una línea el ranking premiaba filas de tabla en lugar de las
-secciones que explican el tema. El mismo vault bajó a menos de la mitad de los chunks.
+Chunks follow blocks: a whole table or a whole list is one chunk. It used to be one row per
+chunk, and with one-line micro-chunks the ranking favored table rows over the sections that
+explain the topic. The same vault came down to under half the chunks.
 
-Guarda los términos, un rango de líneas por chunk y el vector. Cuando mostrás un resultado,
-relee esas líneas del vault. Son ~1,5 KB de vector por chunk más el índice invertido: 200
-notas con 10.000 chunks quedan en ~70 MB, y no es una copia legible del vault.
+The index does not store the note text. It stores terms, a line range per chunk and the
+vector. When a result is printed, those lines are re-read from the vault. That is ~1.5 KB of
+vector per chunk plus the inverted index: 200 notes with 10,000 chunks land around 70 MB, and
+it is not a readable copy of the vault.
 
-Los vectores se cachean por hash del texto y del modelo. Por eso `reindex --force` con la
-caché caliente tarda 7 s en vez de 198.
+Vectors are cached by a hash of the text plus the model. That is why `reindex --force` with a
+warm cache takes 7 s instead of 198.
 
-`obsn status` dice **cuándo se indexó** (`indexado` en ISO y `antiguedad_min`), no sólo
-cuántas notas ve. Es lo que distingue un índice fresco de uno de hace tres días cuando una
-búsqueda no encuentra algo que debería estar.
+`obsn status` reports when the index was built (`indexado` in ISO, `antiguedad_min` in
+minutes) and how many notes it sees. That is what separates a fresh index from a three-day-old
+one when a search misses something it should find.
 
-## Con ovaultd
+## Alongside ovaultd
 
-Esto no reemplaza al sync. Si querés el vault en varias máquinas y que el servidor no pueda
-leerlo, ese es otro proyecto: [ovaultd](https://github.com/kastormdz/ovaultd), un servidor de
-sincronización self-hosted que guarda blobs cifrados y no conoce ni el contenido ni las rutas.
+This is not a sync tool. If you want the vault on several machines and a server that cannot
+read it, that is a different project: [ovaultd](https://github.com/kastormdz/ovaultd), a
+self-hosted sync server that stores encrypted blobs and knows neither the content nor the
+paths.
 
-Se complementan y ninguno necesita al otro:
+They complement each other, and neither needs the other:
 
 | | ovaultd | obsidian-rag |
 |---|---|---|
-| Qué resuelve | llevar el vault a todas tus máquinas sin que el servidor lo lea | encontrar y editar notas en la máquina donde estás |
-| Dónde vive el dato | blobs cifrados en tu servidor | markdown en claro en tu disco |
-| Qué ve el índice | nada, no lee blobs | el texto local |
+| What it solves | getting the vault onto all your machines without the server reading it | finding and editing notes on the machine you are on |
+| Where the data lives | encrypted blobs on your server | plaintext markdown on your disk |
+| What the index sees | nothing, it does not read blobs | the local text |
 
-Esa división es justamente lo que hace que funcione: ovaultd nunca tiene el texto, así que el
-índice no puede alimentarse del servidor. Indexa el vault de la máquina donde corre `obsn`. Si
-ovaultd escribe un cambio en disco, el próximo `reindex` lo levanta; si escribís con `obsn`, se
-dispara solo en segundo plano.
+That split is exactly why it works: ovaultd never holds the plaintext, so the index cannot be
+fed from the server. It indexes the vault on the machine running `obsn`. When ovaultd writes a
+change to disk, the next `reindex` picks it up; when you write through `obsn`, the background
+worker handles it.
 
-Ninguno de los dos te va a pedir que instales el otro.
+Neither one will ask you to install the other.
 
-## Reindexado en segundo plano
+## Background reindex
 
-`write`, `edit`, `delete` y `move` disparan un reindex aparte: `fork+exec`, 1,5 s de espera
-para agrupar ráfagas y un `flock` para que dos corridas no se pisen. El comando te devuelve
-el control en ~60 ms. Para lo que cambia otro proceso (tu editor, un sync) conviene un
-`obsn reindex` periódico: un timer de systemd cada 2 minutos cuesta 0,2% de CPU.
+`write`, `edit`, `delete` and `move` trigger a separate reindex: `fork+exec`, a 1.5 s wait to
+group bursts, and a `flock` so two runs cannot step on each other. The command gives you the
+prompt back in about 60 ms. For changes made by another process (your editor, a sync) run a
+periodic `obsn reindex`: a systemd timer every 2 minutes costs 0.2% CPU.
 
-Se apaga con `OBS_RAG_NO_ASYNC=1`.
+Turn it off with `OBS_RAG_NO_ASYNC=1`.
 
-## Configuración
+## Configuration
 
-| Variable | Default | Qué hace |
+| Variable | Default | What it does |
 |---|---|---|
-| `OBS_RAG_VAULT` | `~/Obsidian` | vault a leer e indexar (ver [Configurar el vault](#configurar-el-vault)) |
-| `OBS_RAG_INDEX` | `$XDG_DATA_HOME/obsidian-rag/index.db` | archivo del índice |
-| `OBS_RAG_CACHE` | `$XDG_CACHE_HOME/fastembed` | caché del modelo |
-| `OBS_RAG_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | modelo de embeddings (ver [El modelo de embeddings](#el-modelo-de-embeddings)) |
-| `OBS_RAG_NO_ASYNC` | sin definir | `1` apaga el reindex en segundo plano |
+| `OBS_RAG_VAULT` | `~/Obsidian` | vault to read and index (see [Point it at your vault](#point-it-at-your-vault)) |
+| `OBS_RAG_INDEX` | `$XDG_DATA_HOME/obsidian-rag/index.db` | index file |
+| `OBS_RAG_CACHE` | `$XDG_CACHE_HOME/fastembed` | model cache |
+| `OBS_RAG_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | embedding model (see [The embedding model](#the-embedding-model)) |
+| `OBS_RAG_NO_ASYNC` | unset | `1` disables the background reindex |
 
-## Actualizar
-
-```bash
-obsn upgrade --check   # 0 al día · 10 hay actualización · 1 error
-obsn upgrade           # fetch + fast-forward, reinstala si cambió pyproject.toml, reindexa
-obsn upgrade --how     # qué hace, paso a paso
-```
-
-Se niega a seguir si el árbol está sucio y nunca crea un merge commit. Si la instalación no
-es editable (no hay `.git` al lado del paquete), te manda a `pip install -U`.
-
-## Versiones
-
-El paquete sigue [SemVer](https://semver.org/lang/es/) y el historial está en
-[CHANGELOG.md](CHANGELOG.md), con el formato de Keep a Changelog. Mientras estemos en 0.x, un
-cambio de esquema del índice o del ranking sube la minor, porque obliga a reconstruir; un fix
-sube la patch.
+## Upgrade
 
 ```bash
-obsn --version          # 0.2.0
-obsn upgrade --check    # 0 al día · 10 hay actualización · 1 error
+obsn upgrade --check   # 0 up to date · 10 update available · 1 error
+obsn upgrade           # fetch + fast-forward, reinstalls if pyproject.toml changed, reindexes
+obsn upgrade --how     # what it does, step by step
 ```
 
-`--check` mira los commits nuevos y el último tag publicado, así que un commit suelto no
-cuenta como versión.
+It refuses to run on a dirty tree and never creates a merge commit. If the install is not
+editable (no `.git` next to the package), it points you at `pip install -U`.
 
-Para cortar una versión está `scripts/release.sh`:
+## Versions
+
+The package follows SemVer. The history is in [CHANGELOG.md](CHANGELOG.md), Keep a Changelog
+format. While we are on 0.x, a change to the index schema or the ranking bumps the minor,
+because it forces a rebuild; a fix bumps the patch.
 
 ```bash
-scripts/release.sh --check      # valida main limpio, el gate y qué se publicaría
-scripts/release.sh 0.3.0        # bump, changelog, tag, push y release en GitHub
+obsn --version          # e.g. 0.4.0
+obsn upgrade --check    # 0 up to date · 10 update available · 1 error
 ```
 
-Corre el gate completo antes de tocar nada, mueve lo que está en `[Unreleased]` a la versión
-nueva con la fecha, crea el tag anotado y el release, y reinstala el paquete editable para que
-`obsn --version` lo refleje. Si `[Unreleased]` está vacío, se niega: no hay nada que publicar.
+`--check` looks at new commits and at the last published tag, so a loose commit does not count
+as a version.
 
-## Plugin de Hermes
+Releases are cut with `scripts/release.sh`:
 
-`plugins/obsidian-rag/` convierte el vault en siete tools que el agente llama solo:
-`vault_search`, `vault_read`, `vault_write`, `vault_list`, `vault_move`, `vault_delete` y
-`vault_status`. Trae además una skill embebida (`obsidian-rag:vault`) con el orden correcto:
-buscar antes de responder, leer antes de citar, buscar la nota canónica antes de crear una
-nueva.
+```bash
+scripts/release.sh --check      # validates clean main, the gate and what would ship
+scripts/release.sh 0.4.1        # bump, changelog, tag, push and GitHub release
+```
+
+It runs the full gate before touching anything, moves whatever is under `[Unreleased]` into the
+new version with today's date, creates the annotated tag and the release, and reinstalls the
+editable package so `obsn --version` reflects it. If `[Unreleased]` is empty it refuses: there
+is nothing to ship.
+
+## Hermes plugin
+
+`plugins/obsidian-rag/` turns the vault into seven tools the agent calls on its own:
+`vault_search`, `vault_read`, `vault_write`, `vault_list`, `vault_move`, `vault_delete` and
+`vault_status`. It also bundles a skill (`obsidian-rag:vault`) with the right order: search
+before answering, read before quoting, look for the canonical note before creating a new one.
 
 ```bash
 hermes plugins install kastormdz/obsidian-rag#plugins/obsidian-rag --no-enable
 hermes plugins enable obsidian-rag
 ```
 
-El plugin **no importa el motor**: cada llamada ejecuta `obsn` en un subprocess (73 ms
-medidos, 24 de ellos de arranque del intérprete). Así el gateway no carga numpy ni el modelo
-de 241 MB, un fallo de búsqueda no se lleva puesto al agente, y el CLI sigue siendo la única
-API. Configuración en `plugins.entries.obsidian-rag`: `obsn`, `vault` y `timeout`.
+The plugin does not import the engine: every call runs `obsn` in a subprocess (73 ms
+measured, 24 of them interpreter startup). That keeps numpy and the 241 MB model out of the
+gateway process, a broken search cannot take the agent down, and the CLI stays the single
+API. Configuration lives in `plugins.entries.obsidian-rag`: `obsn`, `vault` and `timeout`.
 
-El único tool que pregunta antes de actuar es `vault_delete` con `permanent: true`: borra sin
-papelera, así que el plugin lo frena con un hook y el usuario ve el path. El resto escribe de
-forma atómica o manda a `.trash`.
+The only tool that asks before acting is `vault_delete` with `permanent: true`: it deletes
+without the trash, so the plugin gates it with a hook and the user sees the path. Everything
+else writes atomically or goes to `.trash`.
 
-## Para agentes
+## For agents
 
-`skills/obsidian-rag/SKILL.md` es una skill con frontmatter YAML y protocolo: cuándo usar
-`rag` y cuándo `search`, qué hacer si devuelve vacío, cómo citar la nota y las trampas de
-argv. Apuntá al agente ahí en vez de explicarle la herramienta. Si además instalás el plugin
-de Hermes, la skill viaja con él y no hace falta copiarla.
+`skills/obsidian-rag/SKILL.md` is a skill with YAML frontmatter and a protocol: when to use
+`rag` and when `search`, what to do when the result is empty, how to cite the note, and the
+argv pitfalls. Point the agent there instead of explaining the tool. With the Hermes plugin
+installed, the skill ships with it and there is nothing to copy.
 
-## Seguridad
+## Security
 
-- Todo path se resuelve y se verifica dentro del vault. `../..`, rutas absolutas y symlinks
-  que apunten afuera se rechazan.
-- Las escrituras son atómicas: archivo temporal, `fsync` y `rename`.
-- `delete` manda a `.trash/` con fecha y carpeta de origen. Sólo borra de verdad con
-  `--hard`.
-- El índice no guarda el texto, pero sí el vocabulario completo y los vectores. Tratalo como
-  dato sensible, con el mismo cuidado que el vault.
+- Every path is resolved and checked to stay inside the vault. `../..`, absolute paths and
+  symlinks pointing outside are rejected.
+- Writes are atomic: temp file, `fsync`, `rename`.
+- `delete` moves the note to `.trash/` with a timestamp and its original folder. Only `--hard`
+  really deletes.
+- The index does not store the text, but it does store the full vocabulary and the vectors.
+  Treat it as sensitive data, with the same care as the vault.
 
 ## Tests
 
@@ -317,31 +315,30 @@ de Hermes, la skill viaja con él y no hace falta copiarla.
 python -m unittest discover -s tests -t .
 ```
 
-Toda la suite corre contra vaults temporales: no tocan ningún vault real. Hoy son más de
-noventa, y el número exacto lo imprime el propio comando.
+The whole suite runs against temporary vaults: it never touches a real one. There are more
+than ninety today, and the exact number is printed by the command itself.
 
-El plugin de Hermes tiene su propio E2E, que lo carga como lo hace Hermes y ejercita los
-siete tools contra un vault temporal:
+The Hermes plugin has its own E2E, which loads it the way Hermes does and exercises all seven
+tools against a temporary vault:
 
 ```bash
-python tests/e2e_plugin.py    # 34 chequeos
+python tests/e2e_plugin.py    # 34 checks
 hermes plugins doctor plugins/obsidian-rag --ci
 ```
 
-Para medir recuperación y latencia antes de tocar el ranking, el chunker o el modelo:
+To measure retrieval and latency before changing the ranking, the chunker or the model:
 
 ```bash
 python bench/bench_search.py --verbose
 python bench/compare_models.py
 ```
 
-Números de referencia del banco: top-1 en paráfrasis 3/10, top-5 4/10, cero falsos positivos
-en 8 consultas fuera de dominio, y 5/5 cuando el término es exacto. La
-recuperación puramente semántica es lo más flojo del conjunto: un modelo de 384 dimensiones
-y 12 capas en CPU no resuelve bien una paráfrasis sin ninguna palabra en común. Si eso te
-importa más que la velocidad, `bench/compare_models.py` compara alternativas sobre el índice
-ya armado.
+Reference numbers from the bench: paraphrases hit top-1 in 4 of 10 cases, top-5 in 5 of 10,
+zero false positives across 8 out-of-domain queries, and top-5 5/5 when the term is exact (4/5
+on top-1). Pure semantic retrieval is the weak spot: a 384-dimension, 12-layer model on CPU does
+not handle a paraphrase with no shared words well. If that matters more to you than speed,
+`bench/compare_models.py` compares alternatives against the index you already have.
 
-## Licencia
+## License
 
 MIT.

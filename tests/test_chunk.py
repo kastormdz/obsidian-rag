@@ -19,8 +19,8 @@ class Chunker(unittest.TestCase):
             "| host | ip | rol |\n"
             "|---|---|---|\n"
             "| alpha | 192.0.2.11 | docker |\n"
-            "| beta | 192.0.2.12 | desktop |\n"
-            "| gamma | 192.0.2.13 | laptop |\n"
+            "| beta | 192.0.2.12 | escritorio |\n"
+            "| gamma | 192.0.2.13 | portátil |\n"
         )
         tablas = [c for c in chunk(contenido) if c["ctype"] == "table"]
         self.assertEqual(len(tablas), 1, f"esperaba 1 tabla, salieron {len(tablas)}")

@@ -44,12 +44,12 @@ def make_vault() -> Path:
     (root / "01-Infra").mkdir()
     (root / "02-Personal").mkdir()
     (root / "01-Infra" / "keycloak.md").write_text(
-        "# Keycloak\n\nFederación con OpenLDAP para 1.200 usuarios.\nSSO del corporativo.\n",
+        "# Keycloak\n\nFederación con OpenLDAP para los servicios internos.\nSSO de las aplicaciones.\n",
         encoding="utf-8")
     (root / "01-Infra" / "docker.md").write_text(
-        "# Docker\n\nContenedores en Alpha, en el disco de datos.\n", encoding="utf-8")
+        "# Docker\n\nContenedores del servidor de desarrollo.\n", encoding="utf-8")
     (root / "02-Personal" / "viaje.md").write_text(
-        "# Viaje\n\nPasajes a la costa en enero.\n", encoding="utf-8")
+        "# Viaje\n\nPasajes para las vacaciones.\n", encoding="utf-8")
     return root
 
 
@@ -106,7 +106,7 @@ def main():
           bool(h["hits"]) and "score" in h["hits"][0] and h["hits"][0]["snippet"], h["hits"][0].get("snippet", "")[:50] if h.get("hits") else "")
 
     # --- search exacta con filtro de carpeta
-    e = call("vault_search", {"query": "la costa", "mode": "exact"})
+    e = call("vault_search", {"query": "vacaciones", "mode": "exact"})
     check("search exact encuentra la nota personal",
           e.get("ok") and [x["path"] for x in e["hits"]] == ["02-Personal/viaje.md"], e.get("hits"))
 
@@ -135,7 +135,7 @@ def main():
     check("read devuelve el contenido", rd.get("ok") and "OpenLDAP" in rd.get("content", ""), f"{rd.get('chars')} chars")
 
     # --- write create (y que el path sin .md funcione)
-    w = call("vault_write", {"path": "01-Infra/ldap", "content": "# LDAP\n\nDirectorio corporativo.\n"})
+    w = call("vault_write", {"path": "01-Infra/ldap", "content": "# LDAP\n\nDirectorio de usuarios.\n"})
     check("write crea con path sin extension", w.get("ok") and (root / "01-Infra" / "ldap.md").exists(), w.get("output"))
 
     # --- append
