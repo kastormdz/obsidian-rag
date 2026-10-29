@@ -89,7 +89,8 @@ CREATE TABLE IF NOT EXISTS df (
 CREATE TABLE IF NOT EXISTS emb (
     h   TEXT PRIMARY KEY,
     dim INTEGER,
-    v   BLOB
+    v   BLOB,
+    modelo TEXT
 );
 
 -- Estado y versión del índice. Sin esto, cambiar el criterio de troceado o el
@@ -103,7 +104,7 @@ CREATE TABLE IF NOT EXISTS meta (
 # Versión del criterio de troceado. Si cambia `chunk()`, subir esto: el hash de la
 # NOTA no cambia, así que sin este marcador un `reindex` incremental no re-trocea
 # nada y el índice viejo sobrevive mintiendo.
-CHUNKER_VERSION = 2
+CHUNKER_VERSION = 3
 
 # Versión del índice invertido. Se puede poblar sin re-embeber (sale del texto ya
 # guardado), así que subirla NO obliga a un rebuild de 4 minutos.
@@ -113,10 +114,18 @@ POSTINGS_VERSION = 1
 def conn() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB), exist_ok=True)
     c = sqlite3.connect(DB, timeout=30)
-    _migrar_sin_texto(c)
-    c.executescript(SCHEMA)
-    _ensure_columns(c)
+    # DDL y migraciones sólo la primera vez por proceso y por path: `search()` abre una
+    # conexión por consulta, y re-verificar el esquema en cada una costaba 0,33 ms contra
+    # 0,03 ms de un connect pelado (11,7x medido).
+    if DB not in _INICIALIZADAS:
+        _migrar_sin_texto(c)
+        c.executescript(SCHEMA)
+        _ensure_columns(c)
+        _INICIALIZADAS.add(DB)
     return c
+
+
+_INICIALIZADAS: set[str] = set()
 
 
 def _migrar_sin_texto(c: sqlite3.Connection) -> None:
@@ -163,7 +172,10 @@ def _ensure_columns(c: sqlite3.Connection) -> None:
         for name, decl in cols:
             if name not in have:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
-                print(f"[index] migracion: {table}.{name} agregada", flush=True)
+                # A stderr: stdout es el canal de `--json`, y una línea de log acá rompe
+                # el `json.loads` del plugin en el primer uso de un índice nuevo.
+                print(f"[index] migracion: {table}.{name} agregada",
+                      file=sys.stderr, flush=True)
     c.commit()
 
 
@@ -197,20 +209,36 @@ def chunk(content: str, min_chars: int = 120, max_chars: int = 1200) -> list[dic
         buf.append(ln)
         buf_end = i
 
+    def _solo_heading(b: list[str]) -> bool:
+        """¿El buffer es sólo la línea de un encabezado (ignorando blancos)?"""
+        return (bool(b) and b[0].lstrip().startswith("#")
+                and sum(1 for x in b if x.strip()) <= 1)
+
     def flush(final: bool = False) -> None:
         nonlocal buf, heading, hlevel, ctype
         text = "\n".join(buf).strip()
+        # Un buffer que sólo tiene la línea del encabezado espera a su cuerpo: emitirlo
+        # acá produce el chunk huérfano de una línea, y fusionarlo lo pega a la sección
+        # ANTERIOR (se perdía el heading y sus términos no entraban como in_meta).
+        if _solo_heading(buf) and not final:
+            return
         # min_chars es un piso de calidad, NO un filtro: una sección corta pero densa
         # ("## Backup → /srv/...") es exactamente lo que se busca. Descartarla deja el
         # término invisible y el RAG responde otra cosa con confianza falsa.
         if text:
-            if len(text) < min_chars and out and ctype == "prose":
-                # Bloque corto de prosa: se FUSIONA con el anterior en vez de
-                # descartarse. Descartarlo es cómo una nota corta queda invisible
-                # al RAG (medido 2026-10-19: cuerpo de 62 chars perdido).
+            # Fusionar sólo dentro de la MISMA sección y sin pasar max_chars: antes se
+            # pegaba cualquier prosa corta al chunk previo aunque fuera de otra sección
+            # (o de una tabla), y la sección nueva desaparecía como tal.
+            if (len(text) < min_chars and out and ctype == "prose"
+                    and out[-1]["ctype"] == "prose"
+                    and out[-1]["heading"] == heading
+                    and len(out[-1]["text"]) + len(text) <= max_chars):
                 out[-1]["text"] = (out[-1]["text"] + "\n\n" + text).strip()
                 out[-1]["off_end"] = buf_end
-            elif final or len(text) >= min_chars or not out or ctype in ("code", "table", "list"):
+            else:
+                # No se pudo fusionar (otra sección, otro tipo, o ya es grande): se emite.
+                # `min_chars` es un piso para preferir el merge, no un filtro: descartar
+                # acá es cómo una sección corta queda invisible al RAG.
                 out.append({"heading": heading, "hlevel": hlevel, "ctype": ctype,
                             "text": text, "off_start": buf_start, "off_end": buf_end})
         buf = []
@@ -238,12 +266,25 @@ def chunk(content: str, min_chars: int = 120, max_chars: int = 1200) -> list[dic
             continue
         m = re.match(r"^(#{1,6})\s+(.*)", ln)
         if m:
-            flush()
+            if _solo_heading(buf):
+                # Sección que sólo tenía título: se emite con SU heading antes de pasar
+                # a la siguiente. Si no, el título se pierde bajo la sección nueva.
+                out.append({"heading": heading, "hlevel": hlevel, "ctype": "prose",
+                            "text": buf[0].strip(), "off_start": buf_start,
+                            "off_end": buf_end})
+                buf = []
+            else:
+                flush()
             heading, hlevel = m.group(2).strip(), len(m.group(1))
             ctype = "prose"
             agregar(ln, i)
             continue
         if not ln.strip():
+            if _solo_heading(buf):
+                # El título espera el cuerpo de su sección. La línea en blanco se acumula
+                # para que `text` y el rango off_start/off_end reconstruyan lo mismo.
+                agregar(ln, i)
+                continue
             flush()
             continue
         # Tipo del bloque según la línea. Mientras el tipo no cambie, las líneas se
@@ -391,6 +432,9 @@ def embed_all(texts: list[str], c: sqlite3.Connection, model=None) -> list[Optio
     import numpy as np
     hashes = [_hash_emb(t) for t in texts]
     got: dict[str, Any] = {}
+    # hash → texto de una vez: `texts[hashes.index(h)]` escaneaba la lista por cada
+    # faltante (O(N²) al embeber un vault nuevo).
+    por_hash = {h: t for h, t in zip(hashes, texts)}
     unicos = list(dict.fromkeys(hashes))
     for i in range(0, len(unicos), 500):
         lote = unicos[i : i + 500]
@@ -403,7 +447,7 @@ def embed_all(texts: list[str], c: sqlite3.Connection, model=None) -> list[Optio
             model = _MODEL_HOLDER[0] or embedder()
             _MODEL_HOLDER[0] = model
         if model is not None:
-            nuevos = list(model.embed(missing_texts := [texts[hashes.index(h)] for h in faltan]))
+            nuevos = list(model.embed(missing_texts := [por_hash[h] for h in faltan]))
             c.executemany(
                 "INSERT OR REPLACE INTO emb (h, dim, v, modelo) VALUES (?,?,?,?)",
                 [(_hash_emb(t), v.shape[0], v.astype("float32").tobytes(), MODELO)
@@ -419,9 +463,12 @@ def embed_all(texts: list[str], c: sqlite3.Connection, model=None) -> list[Optio
 def listar_notas() -> list[dict[str, Any]]:
     """Camina el vault en disco: (name relativo, mtime, path absoluto)."""
     salida: list[dict[str, Any]] = []
-    if not os.path.isdir(VAULT):
+    # Una sola resolución de la raíz: `dentro_del_vault` resolvía el vault dos veces por
+    # nota (2 × 200 notas = 400 syscalls evitables en cada reindex).
+    raiz_vault = os.path.realpath(VAULT)
+    if not os.path.isdir(raiz_vault):
         return salida
-    for raiz, dirs, files in os.walk(VAULT):
+    for raiz, dirs, files in os.walk(raiz_vault):
         dirs[:] = sorted(d for d in dirs if d not in _EXCLUIDOS and not d.startswith("."))
         for nombre in sorted(files):
             if nombre.startswith(".") or not nombre.endswith(".md"):
@@ -429,13 +476,13 @@ def listar_notas() -> list[dict[str, Any]]:
             abs_ = os.path.join(raiz, nombre)
             # Un symlink que apunta afuera del vault no es una nota del vault: si se indexa,
             # el contenido de ~/.ssh o /etc queda persistido y `rag` lo devuelve.
-            if not dentro_del_vault(abs_, VAULT):
+            if not dentro_del_vault(abs_, raiz_vault):
                 continue
             try:
                 mt = os.stat(abs_).st_mtime
             except OSError:
                 continue
-            rel = os.path.relpath(abs_, VAULT).replace(os.sep, "/")
+            rel = os.path.relpath(abs_, raiz_vault).replace(os.sep, "/")
             salida.append({"name": rel, "mtime": mt, "abs": abs_})
     return salida
 
@@ -485,6 +532,10 @@ def build(force: bool = False) -> None:
     _purgar_emb_viejos(c)
 
     changed, same, failed = [], 0, []
+    # Una sola lectura del estado previo: antes era un SELECT POR NOTA (200 consultas por
+    # reindex incremental, cada una abriendo un cursor nuevo).
+    prev_map = {p: (sz, mt, h) for p, sz, mt, h in
+                c.execute("SELECT path, size, mtime, hash FROM notes")}
     for n in notes:
         path = n["name"]
         try:
@@ -496,8 +547,8 @@ def build(force: bool = False) -> None:
         # El HASH del contenido es la única señal fiable de "cambió": el mtime puede venir
         # viejo por la caché del server y una edición del mismo largo no cambia el size.
         ch = hashlib.sha1(body.encode("utf-8", "replace")).hexdigest()
-        prev = c.execute("SELECT size, mtime, hash FROM notes WHERE path=?", (path,)).fetchone()
-        if prev and not force and len(prev) > 2 and prev[2] == ch:
+        prev = prev_map.get(path)
+        if prev and not force and prev[2] == ch:
             same += 1
             continue
         changed.append((path, mt, body))
@@ -671,23 +722,42 @@ def _texto_del_chunk(path: str, inicio: int | None, fin: int | None) -> str:
 def _con_texto(c: sqlite3.Connection, elegidos: list[dict]) -> list[dict]:
     """Agrega el texto a los k ganadores y limpia los campos internos.
 
-    El texto se relee del vault para k notas como máximo, no para el vault entero.
+    El texto se relee del vault para k notas como máximo, no para el vault entero. Se
+    cachean las líneas por nota: varios chunks ganadores de la misma nota reabrían y
+    re-parteaban el mismo archivo una vez por chunk.
     """
     ids = [r["_id"] for r in elegidos]
     rangos = {r[0]: (r[1], r[2], r[3]) for r in c.execute(
         f"SELECT id, path, off_start, off_end FROM chunks"
         f" WHERE id IN ({','.join('?' * len(ids))})", ids
     )} if ids else {}
+    lineas_por_nota: dict[str, list[str]] = {}
+
+    def texto_de(path: str, ini: int | None, fin: int | None) -> str:
+        if not path or ini is None or fin is None:
+            return ""
+        if path not in lineas_por_nota:
+            try:
+                lineas_por_nota[path] = leer_nota(os.path.join(VAULT, path)).split("\n")
+            except OSError:
+                lineas_por_nota[path] = []
+        lineas = lineas_por_nota[path]
+        return "\n".join(lineas[ini:fin + 1]).strip()
+
     for r in elegidos:
         cid = r.pop("_id")
         r.pop("_cob", None)
         r.pop("_nota", None)
         path, ini, fin = rangos.get(cid, ("", None, None))
-        r["text"] = _texto_del_chunk(path, ini, fin) if path else ""
+        r["text"] = texto_de(path, ini, fin)
     return elegidos
 
 
 def search(query: str, k: int = 5, alpha: float = 0.6) -> list[dict]:
+    # Sin índice no hay nada que buscar, y `conn()` CREARÍA una DB vacía: después
+    # `status` diría "0 notas" en vez de "no hay índice, corré obsn reindex".
+    if not os.path.exists(DB):
+        return []
     c = conn()
     import math
 
@@ -699,7 +769,11 @@ def search(query: str, k: int = 5, alpha: float = 0.6) -> list[dict]:
         return []
     # Los términos CON CONTENIDO (sin stopwords) son los que definen el sujeto de la
     # búsqueda: si no, "no" puede ser el más específico y la cobertura deja de filtrar.
-    key_set = set(key_terms(query))
+    # Sin fallback a "todos los tokens": `key_terms` devolvía las stopwords cuando la
+    # consulta era sólo stopwords, y el piso de cobertura dejaba pasar ruido con eso.
+    key_set = {w for w in tok(query) if w not in _STOP and len(w) > 1}
+    if not key_set:
+        return []
 
     # ── IDF de la consulta, una fila por término (math, no numpy: la fase léxica no
     # necesita el modelo ni la matriz de vectores)
@@ -725,26 +799,29 @@ def search(query: str, k: int = 5, alpha: float = 0.6) -> list[dict]:
     # mismo umbral (POS 3/5/1 -> 2/3/3). Ver docs/AUDIT-2026-10-24.md.
     marcas = ",".join("?" * len(qset))
     por_chunk: dict[int, dict[str, float]] = {}
-    for term, cid, n, im in c.execute(
-        f"SELECT term, chunk, n, in_meta FROM postings WHERE term IN ({marcas})", tuple(qset)
+    nota_terms: dict[str, set[str]] = {}
+    # UNA pasada sobre `postings`: antes eran dos (una para el chunk y otra con JOIN para
+    # la nota) recorriendo exactamente las mismas filas.
+    for term, cid, n, im, path in c.execute(
+        f"SELECT p.term, p.chunk, p.n, p.in_meta, c.path FROM postings p"
+        f" JOIN chunks c ON c.id = p.chunk WHERE p.term IN ({marcas})", tuple(qset)
     ):
         d = por_chunk.setdefault(cid, {"tf": 0.0, "masa": 0.0, "meta": 0})
         d["tf"] += n
-        d["masa"] += idf.get(term, 0.0)
-        if im:
-            d["meta"] = 1
-
-    # Cobertura a nivel NOTA: una consulta cuyos términos caen en secciones distintas de
-    # la misma nota tiene que encontrar esa nota. Sin esto, "reindex embeddings" no
-    # devolvía la nota que documenta ambos conceptos por separado (medido 2026-10-24:
-    # cada chunk cubría la mitad de la consulta y ninguno llegaba al umbral).
-    nota_terms: dict[str, set[str]] = {}
-    for term, path in c.execute(
-        f"SELECT p.term, c.path FROM postings p JOIN chunks c ON c.id = p.chunk"
-        f" WHERE p.term IN ({marcas})", tuple(qset)
-    ):
+        # Cobertura y boost SOLO con términos con contenido: `masa_total` también los
+        # excluye, así que sumar stopwords acá hacía que la cobertura pasara de 1.0 y
+        # que un "de" en el path diera 1.35x aunque no hubiera un solo término clave.
+        if term in key_set:
+            d["masa"] += idf.get(term, 0.0)
+            if im:
+                d["meta"] = 1
         nota_terms.setdefault(path, set()).add(term)
-    nota_cob = {p: sum(idf.get(t, 0.0) for t in ts) / masa_total
+
+    # Cobertura a nivel NOTA: fracción de términos CLAVE presentes. Antes se sumaba IDF y
+    # las stopwords inflaban el numerador (cobertura > 1.0, ganadoras falsas). La fracción
+    # está acotada en [0,1] y premia lo que importa: que la nota tenga TODOS los términos,
+    # aunque caigan en secciones distintas. `nota_terms` ya se llenó en la pasada de arriba.
+    nota_cob = {p: len(ts & key_set) / len(key_set) if key_set else 0.0
                 for p, ts in nota_terms.items()}
 
     # ── Fase 1: ¿la evidencia léxica ya alcanza? Sin vectores y sin numpy.

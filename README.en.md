@@ -181,12 +181,12 @@ when nothing did.
 
 Chunks follow blocks: a whole table or a whole list is one chunk. It used to be one row per
 chunk, and with one-line micro-chunks the ranking favored table rows over the sections that
-explain the topic. The same vault came down to a third of the chunks.
+explain the topic. The same vault came down to under half the chunks.
 
 The index does not store the note text. It stores terms, a line range per chunk and the
-vector. When a result is printed, those lines are re-read from the vault. That is ~1.5 KB per
-chunk, almost all of it the 384-float vector: a 200-note vault lands around 45 MB, and it is
-not a readable copy of the vault.
+vector. When a result is printed, those lines are re-read from the vault. That is ~1.5 KB of
+vector per chunk plus the inverted index: 200 notes with 10,000 chunks land around 70 MB, and
+it is not a readable copy of the vault.
 
 Vectors are cached by a hash of the text plus the model. That is why `reindex --force` with a
 warm cache takes 7 s instead of 198.
@@ -335,7 +335,7 @@ python bench/bench_search.py --verbose
 python bench/compare_models.py
 ```
 
-Reference numbers from the bench: paraphrases hit top-1 in 3 of 10 cases, top-5 in 5 of 10,
+Reference numbers from the bench: paraphrases hit top-1 in 3 of 10 cases, top-5 in 4 of 10,
 zero false positives across 8 out-of-domain queries, and 5/5 when the term is exact. Pure
 semantic retrieval is the weak spot: a 384-dimension, 12-layer model on CPU
 does not handle a paraphrase with no shared words well. If that matters more to you than

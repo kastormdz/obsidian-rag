@@ -17,7 +17,7 @@ import os
 import shutil
 import subprocess
 import tempfile
-from typing import Any
+from typing import Any, Sequence
 
 DEFAULT_TIMEOUT = 30
 
@@ -57,11 +57,20 @@ def binary() -> str:
     return path
 
 
-def run(*argv: str, want_json: bool = False, stdin: str | None = None) -> Any:
-    """Run ``obsn <argv>`` and return parsed JSON (``want_json``) or stdout text."""
-    cmd = [binary(), *argv]
+def run(sub: str, *args: str, flags: Sequence[str] = (), want_json: bool = False,
+        stdin: str | None = None) -> Any:
+    """Run ``obsn <sub> [flags] [--] <args>`` and return parsed JSON (``want_json``) or stdout.
+
+    Los posicionales van SIEMPRE después de ``--``: así una búsqueda de ``--force`` o un
+    path que empieza con ``-`` no se interpretan como opciones del CLI.
+    """
+    cmd = [binary(), sub]
     if want_json:
         cmd.append("--json")
+    cmd.extend(flags)
+    if args:
+        cmd.append("--")
+        cmd.extend(args)
     env = dict(os.environ)
     if _CFG["vault"]:
         env["OBS_RAG_VAULT"] = _CFG["vault"]
@@ -74,12 +83,12 @@ def run(*argv: str, want_json: bool = False, stdin: str | None = None) -> Any:
         raise ObsnError(f"no se pudo ejecutar {cmd[0]!r}") from None
     except subprocess.TimeoutExpired:
         raise ObsnError(
-            f"obsn {argv[0]} pasó de {_CFG['timeout']} s; subí plugins.entries."
+            f"obsn {sub} pasó de {_CFG['timeout']} s; subí plugins.entries."
             "obsidian-rag.timeout si el vault es grande"
         ) from None
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()
-        raise ObsnError(detail[:800] or f"obsn {argv[0]} salió con {proc.returncode}")
+        raise ObsnError(detail[:800] or f"obsn {sub} salió con {proc.returncode}")
     if not want_json:
         return proc.stdout
     try:

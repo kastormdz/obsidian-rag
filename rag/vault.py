@@ -49,10 +49,32 @@ def _resolver(path: str) -> Path:
 
 
 def _rel(destino: Path) -> str:
-    # Los DOS lados resueltos: `_resolver` devuelve paths resueltos y `VAULT` puede vivir
-    # bajo un symlink (TMPDIR, /tmp → /private/tmp). Sin esto, `relative_to` falla con un
-    # path que SÍ está adentro y el usuario ve un ValueError incomprensible.
+    """Path relativo al vault, para mostrar. NO sigue el último symlink si no hace falta.
+
+    Un `alias.md -> real.md` es una nota con nombre propio: resolverla hacía que `list`
+    mostrara `real.md` dos veces y `alias.md` nunca.
+    """
+    d = destino if destino.is_absolute() else (VAULT / destino)
+    for base in (VAULT, VAULT.resolve()):
+        # Se prueban las dos bases: `_recorrer` camina la raíz RESUELTA, y `_resolver`
+        # devuelve paths resueltos; comparar contra una sola fallaba según de dónde viniera.
+        try:
+            return d.relative_to(base).as_posix()
+        except ValueError:
+            continue
     return destino.resolve().relative_to(VAULT.resolve()).as_posix()
+
+
+def _con_md(path: str) -> str:
+    """Agrega `.md` si falta. La misma regla para leer, editar, mover y borrar.
+
+    Antes sólo `write_note` lo hacía: `move_note("a.md", "b")` dejaba un archivo sin
+    extensión, invisible para el vault y para el índice.
+    """
+    limpio = (path or "").strip().rstrip("/")
+    if limpio and not limpio.lower().endswith(".md"):
+        limpio += ".md"
+    return limpio
 
 
 def _dentro(destino: Path, pedido: str) -> Path:
@@ -113,11 +135,21 @@ def notas_del_vault() -> dict[str, str]:
 
 
 def _recorrer() -> Iterable[Path]:
-    for raiz, dirs, archivos in os.walk(VAULT):
-        dirs[:] = [d for d in dirs if d not in EXCLUIDAS]
-        for nombre in archivos:
-            destino = Path(raiz) / nombre
-            if destino.suffix.lower() == ".md":
+    """Notas visibles del vault, confinadas.
+
+    Es el punto que usan `list`, `search`, `tags` y `meta`. Antes caminaba el vault sin
+    filtrar symlinks ni ocultos: un `nota.md -> ~/.ssh/id_ed25519` se leía, y `_rel`
+    moría con `ValueError` abortando el comando entero. Ahora usa el mismo confinamiento
+    que `notas_del_vault()`.
+    """
+    raiz = VAULT.resolve()
+    for actual, dirs, archivos in os.walk(raiz, followlinks=False):
+        dirs[:] = sorted(d for d in dirs if d not in EXCLUIDAS and not d.startswith("."))
+        for nombre in sorted(archivos):
+            if nombre.startswith(".") or not nombre.lower().endswith(".md"):
+                continue
+            destino = Path(actual) / nombre
+            if dentro_del_vault(destino, raiz):
                 yield destino
 
 
@@ -220,7 +252,7 @@ def list_notes(folder: str | None = None, limit: int | None = None, tag: str | N
 
 def read_note(path: str) -> str:
     """Contenido completo de la nota."""
-    destino = _resolver(path)
+    destino = _resolver(_con_md(path))
     if not destino.is_file():
         raise FileNotFoundError(f"no existe la nota: {path}")
     return _leer(destino)
@@ -241,9 +273,13 @@ def write_note(path: str, content: str) -> str:
     return f"{accion}: {_rel(destino)} ({len(content)} bytes)"
 
 
-def edit_note(path: str, op: str, content: str) -> str:
-    """append | prepend | replace. `replace` cambia la primera aparición del texto dado."""
-    destino = _resolver(path)
+def edit_note(path: str, op: str, content: str, old: str | None = None) -> str:
+    """append | prepend | replace. `replace` cambia la primera aparición de `old`.
+
+    `old` va como parámetro y no serializado dentro de `content`: con el separador `\n`
+    anterior, un bloque viejo multilínea se partía en el primer salto y corrompía la nota.
+    """
+    destino = _resolver(_con_md(path))
     if not destino.is_file():
         raise FileNotFoundError(f"no existe la nota: {path}")
     actual = _leer(destino)
@@ -252,17 +288,17 @@ def edit_note(path: str, op: str, content: str) -> str:
     elif op == "prepend":
         nuevo = content + actual
     elif op == "replace":
-        # `replace` sólo tiene sentido con el texto viejo, y el CLI lo manda por
-        # `replace-old-new`. Antes había una rama muerta que armaba `nuevo` y después
-        # lanzaba siempre: código que no podía funcionar y confundía el mensaje.
-        raise ValueError(
-            "replace necesita el texto viejo: usá `obsn edit <path> replace <nuevo> <viejo>`"
-        )
-    elif op == "replace-old-new":
-        viejo, _, nuevo_texto = content.partition("\n")
-        if viejo not in actual:
+        if not old:
+            raise ValueError(
+                "replace necesita el texto viejo: obsn edit <path> replace <nuevo> --old <viejo>"
+            )
+        if old not in actual:
             raise ValueError("replace: el texto viejo no está en la nota")
-        nuevo = actual.replace(viejo, nuevo_texto, 1)
+        nuevo = actual.replace(old, content, 1)
+    elif op == "replace-old-new":
+        raise ValueError(
+            "replace-old-new se eliminó: usá `replace` y pasá el texto viejo en --old"
+        )
     else:
         raise ValueError(f"operación desconocida: {op} (append|prepend|replace)")
     _escribir_atomico(destino, nuevo)
@@ -271,7 +307,7 @@ def edit_note(path: str, op: str, content: str) -> str:
 
 def delete_note(path: str, hard: bool = False) -> str:
     """Borra: por defecto manda a `.trash/` con timestamp (reversible)."""
-    destino = _resolver(path)
+    destino = _resolver(_con_md(path))
     if not destino.is_file():
         raise FileNotFoundError(f"no existe la nota: {path}")
     if hard:
@@ -296,8 +332,8 @@ def delete_note(path: str, hard: bool = False) -> str:
 
 def move_note(from_path: str, to_path: str) -> str:
     """Mueve o renombra. No pisa un archivo existente."""
-    origen = _resolver(from_path)
-    destino = _resolver(to_path)
+    origen = _resolver(_con_md(from_path))
+    destino = _resolver(_con_md(to_path))
     if not origen.is_file():
         raise FileNotFoundError(f"no existe la nota: {from_path}")
     if destino.exists():
@@ -352,7 +388,7 @@ def list_tags() -> str:
 
 def get_note_metadata(path: str) -> str:
     """Frontmatter, tags, tamaño, fechas y backlinks."""
-    destino = _resolver(path)
+    destino = _resolver(_con_md(path))
     if not destino.is_file():
         raise FileNotFoundError(f"no existe la nota: {path}")
     texto = _leer(destino)
@@ -366,18 +402,25 @@ def get_note_metadata(path: str) -> str:
     nombres |= {str(a) for a in (alias if isinstance(alias, list) else [alias])}
     backlinks: list[str] = []
     for otra in _recorrer():
-        if otra == destino:
+        if otra.resolve() == destino:
             continue
         contenido = _leer(otra)
-        if any(f"[[{n}" in contenido for n in nombres if n):
+        # Wikilink EXACTO: `[[uno` no es un link a `uno.md` si el link dice `[[uno-dos]]`.
+        # Antes se matcheaba por prefijo y cualquier nota era backlink de sus homónimas.
+        if any(re.search(r"\[\[" + re.escape(str(n)) + r"(?:\]\]|\||#)", contenido)
+               for n in nombres if n):
             backlinks.append(_rel(otra))
+    # `tags: infra` (escalar) no es una lista: `sorted("infra")` devolvía a, f, i, n, r.
+    tags = datos.get("tags") or []
+    if isinstance(tags, str):
+        tags = [tags]
     lineas = [
         f"path: {_rel(destino)}",
         f"titulo: {_titulo(texto, destino)}",
         f"bytes: {stat.st_size}",
         f"modificado: {time.strftime('%Y-%m-%d %H:%M', time.localtime(stat.st_mtime))}",
         f"palabras: {len(texto.split())}",
-        f"tags: {', '.join(sorted(datos.get('tags', []))) if datos.get('tags') else '(ninguno)'}",
+        f"tags: {', '.join(sorted(str(t) for t in tags)) if tags else '(ninguno)'}",
     ]
     for clave, valor in datos.items():
         if clave != "tags":

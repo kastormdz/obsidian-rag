@@ -48,19 +48,23 @@ def search(args: dict, **kwargs) -> str:
         mode = args.get("mode") or "hybrid"
 
         if mode == "exact":
-            argv = ["search", query, "--limit", str(limit)]
+            flags = ["--limit", str(limit)]
             if args.get("folder"):
-                argv += ["--folder", _clean(args["folder"]).rstrip("/")]
+                flags += ["--folder", _clean(args["folder"]).rstrip("/")]
             if args.get("tag"):
-                argv += ["--tag", str(args["tag"]).lstrip("#")]
-            rows = client.run(*argv, want_json=True)
+                flags += ["--tag", str(args["tag"]).lstrip("#")]
+            rows = client.run("search", query, flags=flags, want_json=True)
             hits = [
                 {"path": r.get("path"), "matches": r.get("matches"),
                  "in_path": bool(r.get("path_hit")), "context": _snippet(r.get("context", ""))}
                 for r in rows
             ]
         else:
-            rows = client.run("rag", query, str(limit), want_json=True)
+            # Se piden MÁS chunks que notas queridas: `rag` devuelve chunks y acá se
+            # deduplica por path. Pidiendo `limit` pelado, una nota con varios chunks
+            # ganadores dejaba la respuesta en 1 o 2 notas aunque se pidieran 5.
+            pedir = min(limit * 3, 50)
+            rows = client.run("rag", query, str(pedir), want_json=True)
             hits, seen = [], set()
             for r in rows:
                 path = r.get("path")
@@ -117,18 +121,18 @@ def write(args: dict, **kwargs) -> str:
 
         if mode == "create":
             tmp = client.with_content_file(content)
-            out = client.run("write", path, "--file", tmp)
+            out = client.run("write", path, flags=("--file", tmp))
         else:
             if mode == "replace" and not args.get("old"):
                 return _fail(ValueError("mode=replace necesita `old`"))
             tmp = client.with_content_file(content)
             if mode == "replace":
-                # `obsn edit` lee el cuerpo de --file sólo si el positional content existe, y
-                # `old` es el positional siguiente: por eso el "" en el medio. Con --file
-                # primero, argparse se come el viejo como content y el reemplazo no ocurre.
-                out = client.run("edit", path, "replace", "", str(args["old"]), "--file", tmp)
+                # `--old` va como flag: el cuerpo viene de --file y el texto viejo no puede
+                # ser un positional libre (argparse se lo comía como contenido).
+                out = client.run("edit", path, "replace",
+                                 flags=("--file", tmp, "--old", str(args["old"])))
             else:
-                out = client.run("edit", path, mode, "--file", tmp)
+                out = client.run("edit", path, mode, flags=("--file", tmp))
 
         return _ok(path=path, mode=mode, output=(out or "").strip()[:400],
                    reindex="en segundo plano; el índice se actualiza solo en ~2 s")
@@ -166,10 +170,10 @@ def list_(args: dict, **kwargs) -> str:
         argv = ["list"]
         if args.get("folder"):
             argv.append(_clean(args["folder"]).rstrip("/"))
-        argv += ["--limit", str(limit)]
+        flags = ["--limit", str(limit)]
         if args.get("tag"):
-            argv += ["--tag", str(args["tag"]).lstrip("#")]
-        rows = client.run(*argv, want_json=True)
+            flags += ["--tag", str(args["tag"]).lstrip("#")]
+        rows = client.run(*argv, flags=flags, want_json=True)
         notes = [r.get("name") for r in rows if r.get("name")]
         return _ok(mode="notes", count=len(notes), notes=notes)
     except Exception as exc:  # noqa: BLE001
@@ -195,8 +199,8 @@ def delete(args: dict, **kwargs) -> str:
         if not path:
             return _fail(ValueError("path vacío"))
         permanent = bool(args.get("permanent"))
-        argv = ["delete", path, "--yes"] + (["--hard"] if permanent else [])
-        out = client.run(*argv)
+        flags = ["--yes"] + (["--hard"] if permanent else [])
+        out = client.run("delete", path, flags=flags)
         return _ok(path=path, permanent=permanent, output=(out or "").strip()[:400],
                    recoverable=not permanent)
     except Exception as exc:  # noqa: BLE001

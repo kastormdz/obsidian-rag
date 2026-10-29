@@ -182,11 +182,11 @@ tampoco. `reindex` sin `--force` sólo toca lo que cambió, y tarda 0,1 s si no 
 
 Trocea por bloque: una tabla entera o una lista entera es un chunk. Antes era una fila por
 chunk, y con micro-trozos de una línea el ranking premiaba filas de tabla en lugar de las
-secciones que explican el tema. El mismo vault bajó a un tercio de los chunks.
+secciones que explican el tema. El mismo vault bajó a menos de la mitad de los chunks.
 
 Guarda los términos, un rango de líneas por chunk y el vector. Cuando mostrás un resultado,
-relee esas líneas del vault. Son ~1,5 KB por chunk, casi todo el vector de 384 floats: un
-vault de 200 notas queda en ~45 MB, y no es una copia legible del vault.
+relee esas líneas del vault. Son ~1,5 KB de vector por chunk más el índice invertido: 200
+notas con 10.000 chunks quedan en ~70 MB, y no es una copia legible del vault.
 
 Los vectores se cachean por hash del texto y del modelo. Por eso `reindex --force` con la
 caché caliente tarda 7 s en vez de 198.
@@ -334,7 +334,7 @@ python bench/bench_search.py --verbose
 python bench/compare_models.py
 ```
 
-Números de referencia del banco: top-1 en paráfrasis 3/10, top-5 5/10, cero falsos positivos
+Números de referencia del banco: top-1 en paráfrasis 3/10, top-5 4/10, cero falsos positivos
 en 8 consultas fuera de dominio, y 5/5 cuando el término es exacto. La
 recuperación puramente semántica es lo más flojo del conjunto: un modelo de 384 dimensiones
 y 12 capas en CPU no resuelve bien una paráfrasis sin ninguna palabra en común. Si eso te

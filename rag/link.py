@@ -93,26 +93,41 @@ def enlaces_actuales() -> dict[str, set[str]]:
     notes = notas_del_vault()
     cur: dict[str, set[str]] = defaultdict(set)
     names = {p: os.path.splitext(os.path.basename(p))[0].lower() for p in notes}
+    # basename → paths, para resolver cada wikilink en O(1) en vez de recorrer el vault
+    por_nombre: dict[str, list[str]] = defaultdict(list)
+    for p, n in names.items():
+        por_nombre[n].append(p)
     for p, joined in notes.items():
         for raw in WIKILINK.findall(joined):
-            t = raw.strip().lower().rstrip(".md")
-            for q, n in names.items():
-                if n == t and q != p:
+            t = raw.strip().lower().removesuffix(".md")
+            for q in por_nombre.get(t, ()):
+                if q != p:
                     cur[p].add(q)
     return cur
+
+
+def _dueno(p: str, q: str, cur: dict) -> str:
+    """De un par, qué nota "posee" el link: la más canónica, desempatando por nombre."""
+    cp, cq = score_de_canonicidad(p, cur), score_de_canonicidad(q, cur)
+    if cp != cq:
+        return p if cp > cq else q
+    if len(p) != len(q):
+        return p if len(p) < len(q) else q
+    return min(p, q)
 
 
 def vecinos(vecs: dict, cur: dict, min_score: float, top_k: int) -> dict[str, list]:
     """Para cada nota, sus vecinas no enlazadas con score >= min_score.
 
-    Deduplicación recíproca: si A propone B y B propone A, es UN link, no dos.
-    Sin esto, 440 propuestas se reducen a ~180 reales y el grafo queda legible.
-    El desempate es la longitud del nombre: la nota más específica es la que
-    "posee" la relación (patrón: `keycloak-tutorial` es canónica de
-    `keycloak-openldap`, no al revés).
+    Deduplicación recíproca: si A propone B y B propone A, es UN link, no dos. Gana la
+    dirección de la nota más canónica.
     """
     import numpy as np
     paths = list(vecs)
+    if not paths:
+        # Sin vectores `np.vstack([])` explota con ValueError; un índice sin embeddings
+        # (o con todo excluido) no tiene vecinos, no es un error.
+        return {}
     M = np.vstack([vecs[p] for p in paths])
     sim = M @ M.T
     idx = {p: i for i, p in enumerate(paths)}
@@ -130,21 +145,23 @@ def vecinos(vecs: dict, cur: dict, min_score: float, top_k: int) -> dict[str, li
         if cands:
             crudos[p] = cands[:top_k]
 
-    # Deduplicar recíprocos: gana la nota cuyo nombre es más corto/específico.
-    out: dict[str, list] = {}
-    ya_vistas: set[frozenset] = set()
+    # Un link por par, en UNA dirección. Antes, al ver el par por segunda vez se borraban
+    # las DOS direcciones: los pares más parecidos del vault —justo los que importan— no
+    # se proponían nunca.
+    pares: dict[frozenset, tuple[float, str, str]] = {}
     for p, cands in crudos.items():
         for s, q in cands:
             par = frozenset((p, q))
-            if par in ya_vistas:
-                # quitar la dirección inversa si ya se emitió
-                if q in out and any(x[1] == p for x in out[q]):
-                    out[q] = [x for x in out[q] if x[1] != p]
-                    if not out[q]:
-                        del out[q]
-                continue
-            ya_vistas.add(par)
-            out.setdefault(p, []).append((s, q))
+            previo = pares.get(par)
+            if previo is None or s > previo[0]:
+                pares[par] = (s, p, q)
+
+    out: dict[str, list] = {}
+    for s, p, q in pares.values():
+        dueno = _dueno(p, q, cur)
+        out.setdefault(dueno, []).append((s, q if dueno == p else p))
+    for lista in out.values():
+        lista.sort(key=lambda x: -x[0])
     return out
 
 
@@ -157,6 +174,8 @@ def detecta_canonicos(vecs: dict, cur: dict, umbral: float) -> list[tuple]:
     """
     import numpy as np
     paths = list(vecs)
+    if not paths:
+        return []
     M = np.vstack([vecs[p] for p in paths])
     sim = M @ M.T
     idx = {p: i for i, p in enumerate(paths)}
@@ -174,7 +193,9 @@ def detecta_canonicos(vecs: dict, cur: dict, umbral: float) -> list[tuple]:
 def score_de_canonicidad(p: str, cur: dict) -> float:
     """Más alto = más probable que sea la nota canónica del tema."""
     base = os.path.splitext(os.path.basename(p))[0]
-    entrantes = len(cur.get(p, ()))
+    # ENTRANTES de verdad: `cur[p]` son los links que p EMITE. Contarlos como entrantes
+    # hacía que la nota más enlazada del vault pareciera la menos canónica.
+    entrantes = sum(1 for destinos in cur.values() if p in destinos)
     # sufijos que sugieren "nota derivada" y no canónica
     derivado = sum(1 for s in ("investigacion", "setup", "informe", "research",
                                "test", "notas", "draft", "wip", "deep-dive")

@@ -90,13 +90,13 @@ class VaultTemporal(unittest.TestCase):
         self.assertTrue(vault.read_note("B/dos.md").rstrip().endswith("cola"))
         vault.edit_note("B/dos.md", "prepend", "arriba\n")
         self.assertTrue(vault.read_note("B/dos.md").startswith("arriba"))
-        salida = vault.edit_note("B/dos.md", "replace-old-new", "cola\nCOLA")
+        salida = vault.edit_note("B/dos.md", "replace", "COLA", old="cola")
         self.assertIn("editada", salida)
         self.assertIn("COLA", vault.read_note("B/dos.md"))
 
     def test_replace_con_texto_ausente_falla(self) -> None:
         with self.assertRaises(ValueError):
-            vault.edit_note("B/dos.md", "replace-old-new", "no-esta\nx")
+            vault.edit_note("B/dos.md", "replace", "x", old="no-esta")
 
     def test_move_no_pisa(self) -> None:
         vault.move_note("A/uno.md", "A/renombrada.md")

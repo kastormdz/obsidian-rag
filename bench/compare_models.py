@@ -37,8 +37,10 @@ def main() -> int:
     from fastembed import TextEmbedding
 
     c = idx.conn()
-    filas = c.execute("SELECT path, heading, text FROM chunks").fetchall()
-    textos = [f"{p} :: {h or ''} :: {t}" for p, h, t in filas]
+    # El índice ya no guarda el texto (P-03): se reconstruye por el rango de líneas.
+    filas = c.execute("SELECT path, heading, off_start, off_end FROM chunks").fetchall()
+    textos = [f"{p} :: {h or ''} :: {idx._texto_del_chunk(p, ini, fin)}"
+              for p, h, ini, fin in filas]
     paths = [f[0] for f in filas]
     print(f"corpus: {len(textos)} chunks\n", flush=True)
 

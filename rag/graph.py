@@ -66,6 +66,8 @@ def build_graph(notes: dict[str, str]) -> dict:
     by_name: dict[str, list[str]] = defaultdict(list)
     for p, n in names.items():
         by_name[n].append(p)
+    # ruta relativa sin `.md` → path, para `[[carpeta/nota]]`
+    by_relpath: dict[str, str] = {p.lower().removesuffix(".md"): p for p in notes}
 
     out: dict[str, set[str]] = defaultdict(set)
     inb: dict[str, set[str]] = defaultdict(set)
@@ -77,8 +79,10 @@ def build_graph(notes: dict[str, str]) -> dict:
             target = raw.strip()
             if not target or FALSE_POSITIVE.match(target):
                 continue
-            low = target.lower().rstrip(".md")
-            cands = [p for p in notes if names[p] == low or p.lower().rstrip(".md") == low]
+            low = target.lower().removesuffix(".md")
+            # O(1) por wikilink: `by_name` ya existía pero nadie lo usaba, y el fallback
+            # recorría TODAS las notas por cada link (O(W*N) en un vault grande).
+            cands = by_name.get(low) or ([by_relpath[low]] if low in by_relpath else [])
             if not cands:
                 broken.append((path, target))
                 continue

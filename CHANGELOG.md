@@ -8,16 +8,51 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-10-28
+### Fixed
+
+- **Chunker (ARG-01)**: un encabezado seguido de línea en blanco se fusionaba con la sección
+  ANTERIOR, así que la sección nueva perdía su `heading` y sus términos no entraban como
+  `in_meta`. En el vault real eran **366 secciones en 104 de 203 notas**; ahora quedan 13 en
+  una sola nota (un índice con encabezados dentro de listas). Sube `CHUNKER_VERSION` a 3, así
+  que el próximo `reindex` re-trocea solo.
+- **`edit replace` (ARG-06)**: `old` va como parámetro y no serializado con `\n`. Un bloque
+  viejo multilínea se partía en el primer salto y corrompía la nota. `replace-old-new` se
+  eliminó y falla con un mensaje que dice qué usar.
+- **`.md` en todas las operaciones (ARG-11)**: `move_note("a.md","b")` dejaba un archivo sin
+  extensión, invisible para el vault y el índice. Ahora read/edit/delete/move normalizan igual
+  que write, y un `alias.md` interno se lista con su propio nombre.
+- **Confinamiento (ARG-02)**: `_recorrer()` no filtraba symlinks ni ocultos, y un solo
+  `nota.md -> ~/.ssh/id_x` hacía que `list`, `search` y `meta` murieran con `ValueError` (o
+  leyeran afuera). Usa el mismo confinamiento que `notas_del_vault()`.
+- **Metadatos (ARG-12)**: `tags: infra` se iteraba por carácter (`a, f, i, n, r`) y los
+  backlinks se matcheaban por prefijo (`[[uno-dos]]` contaba para `uno.md`).
+- **Wikilinks (ARG-05)**: `.rstrip(".md")` mutilaba los nombres terminados en `m`/`d`
+  (`systemd -> syste`, `ovaultd -> ovault`), marcando links válidos como rotos. `removesuffix`.
+- **Grafo y links (ARG-04/PERF-04)**: `vecinos()` borraba las DOS direcciones de cada par
+  recíproco (los pares más parecidos no se proponían) y la canonicidad contaba salientes como
+  entrantes. El grafo resuelve wikilinks por `by_name`, que ya construía y no usaba.
+- **Índice (ARG-03)**: `emb` declara `modelo`; los logs de migración van a stderr (rompían el
+  `--json` en un índice nuevo) y `search` no crea una DB vacía cuando no hay índice.
+- **Plugin (ARG-10/ARG-14)**: `vault_search` pide `limit*3` chunks antes de deduplicar por nota
+  (pedía 5 y devolvía 1), y los posicionales van después de `--`, así una búsqueda de
+  `--force` no se interpreta como flag.
+- **`bench/compare_models.py` (ARG-07)**: pedía la columna `text` eliminada; reconstruye por
+  offsets. **`link` (ARG-15)**: no explota con `np.vstack` si no hay vectores.
 
 ### Changed
 
-- **`vault_delete` con `permanent: true` pide aprobación.** Es el único tool irreversible: el
-  plugin registra un hook `pre_tool_call` que devuelve `{"action": "approve"}` con
-  `rule_key: vault_delete_permanent`, así que el usuario ve el path antes del borrado sin
-  vuelta. El borrado normal va a `.trash` y no pregunta.
-- Los README ya no clavan el tamaño del vault: los conteos de notas y chunks envejecían y se
-  contradecían con el índice real. Quedan las proporciones y el costo por chunk, que no caducan.
+- **Cobertura por nota (ARG-08)**: era `Σ idf(términos de la nota) / Σ idf(términos clave)`, así
+  que las stopwords la empujaban por encima de 1.0 y daban ganadoras falsas (y un `de` en el
+  path daba 1.35x). Ahora es la **fracción de términos clave presentes**, acotada en [0,1]. Con
+  eso el banco da top-1 3/10 y top-5 4/10: se pierde un top-5 que antes entraba por cobertura
+  inflada, a cambio de cero falsos positivos y un score que significa algo.
+- **Performance**: `conn()` ya no re-verifica el esquema en cada consulta (11,7x → 1,5x sobre
+  un connect pelado), `build()` lee el estado previo de una vez en lugar de un SELECT por nota,
+  `_con_texto` cachea las líneas por nota, `embed_all` arma el mapa hash→texto (era O(N²)),
+  `listar_notas` resuelve la raíz una vez, y `postings` se recorre en una sola pasada. El banco
+  bajó la mediana de 31 a 22 ms y el p95 de 144 a 36 ms.
+
+## [0.3.0] - 2026-10-28
 
 ### Added
 
@@ -38,6 +73,12 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ### Changed
 
+- **`vault_delete` con `permanent: true` pide aprobación.** Es el único tool irreversible: el
+  plugin registra un hook `pre_tool_call` que devuelve `{"action": "approve"}` con
+  `rule_key: vault_delete_permanent`, así que el usuario ve el path antes del borrado sin
+  vuelta. El borrado normal va a `.trash` y no pregunta.
+- Los README ya no clavan el tamaño del vault: los conteos de notas y chunks envejecían y se
+  contradecían con el índice real. Quedan las proporciones y el costo por chunk, que no caducan.
 - `scripts/release.sh` calla los avisos de dependencias del venv anfitrión y sólo los
   muestra si `pip` falla.
 

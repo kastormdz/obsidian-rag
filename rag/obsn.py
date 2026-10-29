@@ -157,23 +157,24 @@ def cmd_status(args: argparse.Namespace) -> None:
         sin_chunks = c.execute(
             "SELECT COUNT(*) FROM notes WHERE COALESCE(n_chunks, 0) = 0"
         ).fetchone()[0]
-        # Cuándo se indexó: el dato ya estaba en `meta`, pero no se exponía, así que un
-        # agente no podía distinguir un índice fresco de uno de hace tres días. La tabla es
-        # `meta(k, v)`: con nombres inventados el SELECT tira OperationalError y el `except`
-        # de abajo lo convierte en "sin fecha" en silencio.
+        # Cuándo se indexó y en qué estado quedó: los datos ya estaban en `meta`, pero no se
+        # exponían, así que un agente no podía distinguir un índice fresco de uno viejo, ni
+        # un build fallido de uno que nunca corrió. La tabla es `meta(k, v)`: con nombres
+        # inventados el SELECT tira OperationalError y el `except` lo vuelve "sin dato".
         try:
-            fila = c.execute("SELECT v FROM meta WHERE k = 'indexado'").fetchone()
+            filas = dict(c.execute("SELECT k, v FROM meta WHERE k IN ('indexado', 'estado')"))
         except sqlite3.OperationalError:
-            fila = None
+            filas = {}
     indexado = antiguedad = None
-    if fila and fila[0]:
+    if filas.get("indexado"):
         try:
-            sello = float(fila[0])
+            sello = float(filas["indexado"])
         except (TypeError, ValueError):
             sello = 0.0
         if sello:
             indexado = datetime.fromtimestamp(sello).astimezone().isoformat(timespec="seconds")
             antiguedad = max(0, int((time.time() - sello) / 60))
+    estado = filas.get("estado") or "desconocido"
     datos = {
         "indice": str(config.DB),
         "vault": str(config.VAULT),
@@ -184,13 +185,15 @@ def cmd_status(args: argparse.Namespace) -> None:
         "modelo": config.MODELO,
         "indexado": indexado,
         "antiguedad_min": antiguedad,
+        "estado": estado,
     }
     if args.json:
         _json(datos)
         return
     print(
         f"notas={datos['notas']} chunks={datos['chunks']} "
-        f"con_embedding={datos['con_embedding']} sin_chunks={datos['sin_chunks']}\n"
+        f"con_embedding={datos['con_embedding']} sin_chunks={datos['sin_chunks']} "
+        f"estado={estado}\n"
         f"vault={datos['vault']}\nindice={datos['indice']}"
     )
     if indexado:
@@ -222,14 +225,13 @@ def cmd_write(args: argparse.Namespace) -> None:
 
 
 def cmd_edit(args: argparse.Namespace) -> None:
-    if args.op == "replace" and not args.old:
-        raise SystemExit("replace necesita el texto viejo: obsn edit <path> replace <nuevo> <viejo>")
+    viejo = args.old_flag if args.old_flag is not None else args.old
+    if args.op == "replace" and not viejo:
+        raise SystemExit(
+            "replace necesita el texto viejo: obsn edit <path> replace <nuevo> --old <viejo>"
+        )
     contenido = _pedir_contenido(args)
-    if args.op == "replace":
-        contenido = f"{args.old}\n{contenido}"
-        print(vault.edit_note(args.path, "replace-old-new", contenido))
-    else:
-        print(vault.edit_note(args.path, args.op, contenido))
+    print(vault.edit_note(args.path, args.op, contenido, old=viejo))
     if not args.no_reindex:
         _encolar_reindex()
 
@@ -340,7 +342,9 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("path")
     p.add_argument("op", choices=["append", "prepend", "replace"])
     p.add_argument("content", nargs="?")
-    p.add_argument("old", nargs="?")
+    p.add_argument("old", nargs="?", help="texto viejo a reemplazar (o usá --old)")
+    p.add_argument("--old", dest="old_flag",
+                   help="texto viejo a reemplazar; pensado para combinar con --file")
     p.add_argument("--file")
     p.add_argument("--no-reindex", action="store_true",
                    help="no reindexar en segundo plano después de editar")
