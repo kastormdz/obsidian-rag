@@ -1,6 +1,8 @@
 # obsidian-rag
 
-Search and edit an [Obsidian](https://obsidian.md) vault from the terminal with a single
+[![CI](https://github.com/kastormdz/obsidian-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/kastormdz/obsidian-rag/actions/workflows/ci.yml)
+
+Search and edit an [Obsidian](https://obsidian.md) vault from the terminal, with a single
 binary: `obsn`. It reads the notes from disk and builds a local SQLite index with embeddings.
 No server and no account: the index is a file. The vault stays as markdown on your disk.
 
@@ -188,6 +190,10 @@ not a readable copy of the vault.
 
 Vectors are cached by a hash of the text plus the model. That is why `reindex --force` with a
 warm cache takes 7 s instead of 198.
+
+`obsn status` reports **when the index was built** (`indexado` in ISO and `antiguedad_min`),
+not just how many notes it sees. That is what separates a fresh index from a three-day-old one
+when a search misses something it should find.
 
 ## Alongside ovaultd
 

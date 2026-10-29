@@ -133,6 +133,8 @@ def cmd_upgrade(args: argparse.Namespace) -> None:
 
 def cmd_status(args: argparse.Namespace) -> None:
     import sqlite3
+    import time
+    from datetime import datetime
 
     from . import config
 
@@ -155,6 +157,23 @@ def cmd_status(args: argparse.Namespace) -> None:
         sin_chunks = c.execute(
             "SELECT COUNT(*) FROM notes WHERE COALESCE(n_chunks, 0) = 0"
         ).fetchone()[0]
+        # Cuándo se indexó: el dato ya estaba en `meta`, pero no se exponía, así que un
+        # agente no podía distinguir un índice fresco de uno de hace tres días. La tabla es
+        # `meta(k, v)`: con nombres inventados el SELECT tira OperationalError y el `except`
+        # de abajo lo convierte en "sin fecha" en silencio.
+        try:
+            fila = c.execute("SELECT v FROM meta WHERE k = 'indexado'").fetchone()
+        except sqlite3.OperationalError:
+            fila = None
+    indexado = antiguedad = None
+    if fila and fila[0]:
+        try:
+            sello = float(fila[0])
+        except (TypeError, ValueError):
+            sello = 0.0
+        if sello:
+            indexado = datetime.fromtimestamp(sello).astimezone().isoformat(timespec="seconds")
+            antiguedad = max(0, int((time.time() - sello) / 60))
     datos = {
         "indice": str(config.DB),
         "vault": str(config.VAULT),
@@ -163,6 +182,8 @@ def cmd_status(args: argparse.Namespace) -> None:
         "con_embedding": con_vec,
         "sin_chunks": sin_chunks,
         "modelo": config.MODELO,
+        "indexado": indexado,
+        "antiguedad_min": antiguedad,
     }
     if args.json:
         _json(datos)
@@ -172,6 +193,8 @@ def cmd_status(args: argparse.Namespace) -> None:
         f"con_embedding={datos['con_embedding']} sin_chunks={datos['sin_chunks']}\n"
         f"vault={datos['vault']}\nindice={datos['indice']}"
     )
+    if indexado:
+        print(f"indexado={indexado} (hace {antiguedad} min)")
 
 
 def cmd_graph(args: argparse.Namespace) -> None:

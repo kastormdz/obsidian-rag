@@ -140,6 +140,40 @@ class ErroresDeCli(unittest.TestCase):
                 config.DB = previo
         self.assertIn("reindex", str(ctx.exception))
 
+    def test_status_expone_cuando_se_indexo(self) -> None:
+        import contextlib
+        import io
+        import json
+        import time
+
+        from rag import config, obsn
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "i.db"
+            con = sqlite3.connect(db)
+            # Esquema copiado del índice real (`sqlite3 index.db .schema meta`), no inventado:
+            # con columnas de mentira el SELECT falla y el test pasaba probando nada.
+            con.executescript(
+                "CREATE TABLE notes(path TEXT PRIMARY KEY, n_chunks INTEGER);"
+                "CREATE TABLE chunks(id INTEGER PRIMARY KEY, vec BLOB);"
+                "CREATE TABLE meta(k TEXT PRIMARY KEY, v TEXT);"
+            )
+            con.execute("INSERT INTO meta VALUES ('indexado', ?)", (str(time.time() - 3600),))
+            con.commit()
+            con.close()
+            previo = config.DB
+            config.DB = db
+            try:
+                salida = io.StringIO()
+                with contextlib.redirect_stdout(salida):
+                    obsn.cmd_status(argparse.Namespace(json=True))
+            finally:
+                config.DB = previo
+
+        datos = json.loads(salida.getvalue())
+        self.assertGreaterEqual(datos["antiguedad_min"], 59)
+        self.assertRegex(datos["indexado"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$")
+
     def test_list_limit_negativo_se_rechaza(self) -> None:
         from rag import obsn
 

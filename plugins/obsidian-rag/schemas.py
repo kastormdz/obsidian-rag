@@ -107,9 +107,10 @@ DELETE = {
 STATUS = {
     "name": "vault_status",
     "description": (
-        "Estado del índice: vault activo, cantidad de notas y chunks, modelo de embeddings y "
-        "notas sin contenido indexable. Usalo cuando una búsqueda no devuelve nada que "
-        "debería existir, para descartar un índice viejo o apuntado a otro vault."
+        "Estado del índice: vault activo, cantidad de notas y chunks, modelo de embeddings, "
+        "notas sin contenido indexable y cuándo se indexó (antiguedad_min). Usalo cuando una "
+        "búsqueda no devuelve nada que debería existir, para descartar un índice viejo o "
+        "apuntado a otro vault."
     ),
     "parameters": {"type": "object", "properties": {}},
 }

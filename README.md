@@ -1,5 +1,7 @@
 # obsidian-rag
 
+[![CI](https://github.com/kastormdz/obsidian-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/kastormdz/obsidian-rag/actions/workflows/ci.yml)
+
 Busca y edita un vault de [Obsidian](https://obsidian.md) desde la terminal, con un solo
 binario: `obsn`. Lee las notas del disco y arma un índice SQLite con embeddings. No hace
 falta servidor ni cuenta: el índice es un archivo. El vault sigue siendo markdown en tu
@@ -188,6 +190,10 @@ vault de 200 notas queda en ~45 MB, y no es una copia legible del vault.
 
 Los vectores se cachean por hash del texto y del modelo. Por eso `reindex --force` con la
 caché caliente tarda 7 s en vez de 198.
+
+`obsn status` dice **cuándo se indexó** (`indexado` en ISO y `antiguedad_min`), no sólo
+cuántas notas ve. Es lo que distingue un índice fresco de uno de hace tres días cuando una
+búsqueda no encuentra algo que debería estar.
 
 ## Con ovaultd
 

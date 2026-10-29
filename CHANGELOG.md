@@ -19,6 +19,11 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ### Added
 
+- **`obsn status` dice cuándo se indexó**: `indexado` (ISO con offset) y `antiguedad_min`. El
+  dato ya estaba en `meta`, pero no se exponía; sin él un agente no puede distinguir un índice
+  fresco de uno de hace tres días. Lo consume `vault_status`.
+- **CI en GitHub Actions**: unitarios en Python 3.11 y 3.12, más el E2E del plugin (vault
+  temporal, 30 chequeos) en 3.12 con el modelo cacheado.
 - **Plugin de Hermes** en `plugins/obsidian-rag/`: siete tools (`vault_search`, `vault_read`,
   `vault_write`, `vault_list`, `vault_move`, `vault_delete`, `vault_status`) sobre el binario
   `obsn`, más una skill embebida. Sin dependencias de Python; el gateway no carga el modelo.

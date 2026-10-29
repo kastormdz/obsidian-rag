@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Tests unitarios
+        run: python -m unittest discover -s tests -t .
+
+      # El E2E construye un vault temporal, y construir exige embeddings: baja el modelo
+      # (~240 MB). Se cachea por hash de config.py, que es donde vive el nombre del modelo,
+      # y corre en una sola versión de Python para no pagarlo dos veces.
+      - name: Cache del modelo
+        if: matrix.python == '3.12'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/fastembed
+          key: fastembed-${{ runner.os }}-${{ hashFiles('rag/config.py') }}
+
+      - name: E2E del plugin (vault temporal, 30 chequeos)
+        if: matrix.python == '3.12'
+        run: python tests/e2e_plugin.py
