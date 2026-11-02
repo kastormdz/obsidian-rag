@@ -1,23 +1,23 @@
 """
-index — índice local de chunks del vault, con embeddings.
+index — local chunk index of the vault, with embeddings.
 
-POR QUÉ EXISTE
+WHY IT EXISTS
 ─────────────
-Buscar leyendo y embebiendo las notas en cada consulta cuesta minutos: este módulo
-mantiene el texto chunkeado + los vectores en un SQLite local, así una búsqueda es
-`query → SQLite` en milisegundos.
+Searching by reading and embedding the notes on every query takes minutes: this module
+keeps the chunked text plus the vectors in a local SQLite, so a search is
+`query → SQLite` in milliseconds.
 
-SINCRONIZACIÓN
-──────────────
-- `build()` camina el vault en disco y actualiza solo las notas cuyo HASH cambió.
-- `build(force=True)` reindexa todo.
-- El índice es un archivo local: se puede borrar y reconstruir sin pérdida.
+SYNC
+────
+- `build()` walks the vault on disk and updates only the notes whose HASH changed.
+- `build(force=True)` reindexes everything.
+- The index is a local file: it can be deleted and rebuilt with no loss.
 
-USO
-───
-    obsn reindex            # indexa/actualiza
+USAGE
+─────
+    obsn reindex            # index/update
     obsn status             # stats
-    obsn rag "consulta"     # búsqueda semántica
+    obsn rag "query"        # semantic search
 """
 import hashlib
 import os
@@ -136,7 +136,7 @@ _INICIALIZADAS: set[str] = set()
 
 @contextmanager
 def _conexion() -> Iterator[sqlite3.Connection]:
-    """Conexión que se cierra al salir. `with sqlite3.connect(...)` NO cierra: commitea."""
+    """Connection that closes on exit. `with sqlite3.connect(...)` does NOT close: it commits."""
     c = conn()
     try:
         yield c
@@ -145,11 +145,11 @@ def _conexion() -> Iterator[sqlite3.Connection]:
 
 
 def _migrar_sin_texto(c: sqlite3.Connection) -> None:
-    """Descarta un índice del esquema viejo, que guardaba el vault en claro.
+    """Discard an index from the old schema, which stored the vault in clear text.
 
-    `off_start`/`off_end` no se pueden rellenar sin volver a trocear cada nota, así que
-    el índice se tira y se reconstruye. Los vectores de la caché `emb` sobreviven: el
-    reindex siguiente no vuelve a embeber nada.
+    `off_start`/`off_end` cannot be filled without re-chunking every note, so the index is
+    thrown away and rebuilt. The vectors in the `emb` cache survive: the next reindex does
+    not embed anything again.
     """
     try:
         columnas = {r[1] for r in c.execute("PRAGMA table_info(chunks)")}
@@ -164,7 +164,7 @@ def _migrar_sin_texto(c: sqlite3.Connection) -> None:
     except sqlite3.OperationalError:
         pass
     c.commit()
-    print("[index] el índice guardaba el texto en claro: se descarta, corré `obsn reindex`",
+    print("[index] the index stored the vault in clear text: discarding it, run `obsn reindex`",
           file=sys.stderr, flush=True)
 
 
@@ -202,11 +202,11 @@ def _ensure_columns(c: sqlite3.Connection) -> None:
 
 # ── Chunking (headings, fences, tablas) ─────────────────────────────────────
 def chunk(content: str, min_chars: int = 120, max_chars: int = 1200) -> list[dict[str, Any]]:
-    """Divide en chunks respetando estructura markdown. Devuelve lista de dicts.
+    """Split into chunks respecting markdown structure. Returns a list of dicts.
 
-    Un bloque de tabla o de lista es UN chunk, no una fila por chunk: con trozos de ~8
-    tokens, `tf = apariciones / tokens` hacía que una fila le ganara a la sección que
-    explica el tema. Un bloque se corta sólo si supera `max_chars`.
+    A table or list block is ONE chunk, not one row per chunk: with pieces of ~8 tokens,
+    `tf = hits / tokens` made a row beat the section that explains the subject. A block is
+    only cut when it exceeds `max_chars`.
     """
     if not content or len(content.strip()) < 20:
         return []
@@ -219,7 +219,7 @@ def chunk(content: str, min_chars: int = 120, max_chars: int = 1200) -> list[dic
     in_fence = False
 
     def agregar(ln: str, i: int) -> None:
-        """Acumula una línea real y recuerda el rango de líneas del bloque."""
+        """Accumulate a real line and remember the block's line range."""
         nonlocal buf_start, buf_end
         if not buf:
             buf_start = i
@@ -227,7 +227,7 @@ def chunk(content: str, min_chars: int = 120, max_chars: int = 1200) -> list[dic
         buf_end = i
 
     def _solo_heading(b: list[str]) -> bool:
-        """¿El buffer es sólo la línea de un encabezado (ignorando blancos)?"""
+        """Is the buffer only a heading line (ignoring blanks)?"""
         return (bool(b) and b[0].lstrip().startswith("#")
                 and sum(1 for x in b if x.strip()) <= 1)
 
@@ -348,16 +348,16 @@ def embedder():
             ),
         )
     except Exception as exc:  # pragma: no cover
-        print(f"[warn] fastembed no disponible ({exc}); RAG degradará a TF-IDF", file=sys.stderr)
+        print(f"[warn] fastembed not available ({exc}); RAG falls back to TF-IDF", file=sys.stderr)
         return None
 
 
 def _hash_emb(t: str) -> str:
-    """Clave de caché de embeddings: incluye el modelo.
+    """Embedding cache key: it includes the model.
 
-    Sin el modelo en la clave, cambiar `OBS_RAG_MODEL` devuelve los vectores del
-    modelo anterior (otra dimensión, otro espacio) y el coseno compara peras con
-    manzanas. `dim` en la tabla no alcanza: dos modelos pueden compartir 384.
+    Without the model in the key, changing `OBS_RAG_MODEL` returns the previous model's
+    vectors (another dimension, another space) and the cosine compares apples with
+    oranges. `dim` in the table is not enough: two models can share 384.
     """
     return hashlib.sha1(f"{MODELO}\x00{t}".encode("utf-8", "replace")).hexdigest()
 
@@ -372,7 +372,7 @@ def _set_meta(c: sqlite3.Connection, k: str, v: Any) -> None:
 
 
 def _fila_postings(texto: str, metadatos: str) -> list[tuple[str, int, int]]:
-    """(término, frecuencia, en_metadatos) de un chunk. Una vez por build, no por consulta."""
+    """(term, frequency, in_metadata) for a chunk. Once per build, not per query."""
     cuenta: dict[str, int] = {}
     for t in tok(texto):
         cuenta[t] = cuenta.get(t, 0) + 1
@@ -381,7 +381,7 @@ def _fila_postings(texto: str, metadatos: str) -> list[tuple[str, int, int]]:
 
 
 def _poblar_postings(c: sqlite3.Connection) -> None:
-    """Reconstruye el índice invertido leyendo el vault (el índice no guarda el texto)."""
+    """Rebuild the inverted index by reading the vault (the index stores no text)."""
     c.execute("DELETE FROM postings")
     t0 = time.perf_counter()
     # Texto por (path, ord): se trocea cada nota UNA vez, no una vez por chunk.
@@ -414,15 +414,15 @@ def _poblar_postings(c: sqlite3.Connection) -> None:
         )
     _set_meta(c, "postings", POSTINGS_VERSION)
     c.commit()
-    print(f"[build] indice invertido: {total} chunks en {time.perf_counter()-t0:.1f} s", flush=True)
+    print(f"[build] inverted index: {total} chunks in {time.perf_counter()-t0:.1f} s", flush=True)
 
 
 def _purgar_emb_viejos(c: sqlite3.Connection) -> None:
-    """Borra vectores cacheados de otro modelo (o de antes de que se guardara el modelo).
+    """Delete cached vectors from another model (or from before the model was stored).
 
-    La caché `emb` es lo que más pesa en la DB (81 MB con 41.000 filas, de las cuales
-    la mayoría eran del esquema de hash viejo). No afecta al índice: se puede
-    recalcular. Se purga y se compacta.
+    The `emb` cache is the heaviest thing in the DB (81 MB with 41,000 rows, most of them
+    from the old hash scheme). It does not affect the index: it can be recomputed. It is
+    purged and compacted.
     """
     viejos = c.execute(
         "SELECT COUNT(*) FROM emb WHERE modelo IS NULL OR modelo != ?", (MODELO,)
@@ -431,20 +431,20 @@ def _purgar_emb_viejos(c: sqlite3.Connection) -> None:
         return
     c.execute("DELETE FROM emb WHERE modelo IS NULL OR modelo != ?", (MODELO,))
     c.commit()
-    print(f"[build] purgados {viejos} embeddings de otro modelo", flush=True)
+    print(f"[build] purged {viejos} embeddings from another model", flush=True)
     try:
         c.execute("VACUUM")
-        print("[build] DB compactada", flush=True)
+        print("[build] DB compacted", flush=True)
     except sqlite3.Error as exc:
-        print(f"[build] no se pudo compactar: {exc}", file=sys.stderr, flush=True)
+        print(f"[build] could not compact: {exc}", file=sys.stderr, flush=True)
 
 
 def embed_all(texts: list[str], c: sqlite3.Connection, model=None) -> list[Optional[Any]]:
-    """Embeddings con cache por hash (modelo incluido) en la tabla emb.
+    """Embeddings with a per-hash cache (model included) in the emb table.
 
-    `model` puede venir en None: en ese caso se resuelve perezosamente, y sólo si
-    falta embeber algo. Un `reindex` sin cambios no tiene por qué cargar 1,3 s de
-    modelo para no usarlo.
+    `model` may arrive as None: in that case it is resolved lazily, and only if something
+    actually needs embedding. A `reindex` with no changes has no reason to load 1.3 s of
+    model just to not use it.
     """
     import numpy as np
     hashes = [_hash_emb(t) for t in texts]
@@ -478,7 +478,7 @@ def embed_all(texts: list[str], c: sqlite3.Connection, model=None) -> list[Optio
 
 # ── Indexado ─────────────────────────────────────────────────────────────────
 def listar_notas() -> list[dict[str, Any]]:
-    """Camina el vault en disco: (name relativo, mtime, path absoluto)."""
+    """Walk the vault on disk: (relative name, mtime, absolute path)."""
     salida: list[dict[str, Any]] = []
     # Una sola resolución de la raíz: `dentro_del_vault` resolvía el vault dos veces por
     # nota (2 × 200 notas = 400 syscalls evitables en cada reindex).
@@ -508,7 +508,7 @@ def leer_nota(abs_: str) -> str:
     # Defensa en profundidad: aunque el path venga de un listado confiable, no se lee nada
     # que resuelva fuera del vault.
     if not dentro_del_vault(abs_, VAULT):
-        raise ValueError(f"fuera del vault: {abs_!r}")
+        raise ValueError(f"outside the vault: {abs_!r}")
     with open(abs_, "r", encoding="utf-8", errors="replace") as fh:
         return fh.read()
 
@@ -525,8 +525,8 @@ def _build_con(c: sqlite3.Connection, force: bool) -> None:
     # índice tiene que quedar como estaba, no en estado "building".
     if not os.path.isdir(VAULT):
         raise SystemExit(
-            f"no existe el vault {VAULT}: revisá OBS_RAG_VAULT (tiene que ser la carpeta "
-            "que contiene .obsidian/)"
+            f"no vault at {VAULT}: check OBS_RAG_VAULT (it must be the folder "
+            "that contains .obsidian/)"
         )
     # El índice sabe con qué criterio se troceó, con qué modelo se embebió y si ya
     # guardó la vigencia de cada nota. Si cambió cualquiera de los tres, el índice
@@ -535,8 +535,8 @@ def _build_con(c: sqlite3.Connection, force: bool) -> None:
         if ((_meta(c, "chunker") != str(CHUNKER_VERSION))
                 or (_meta(c, "modelo") != MODELO)
                 or (_meta(c, "vigencia") != "1")):
-            print("[build] criterio de indexado, modelo o vigencia distinto al del índice:"
-                  " rebuild completo", flush=True)
+            print("[build] chunking criteria, model or freshness differ from the index:"
+                  " full rebuild", flush=True)
             force = True
     notes = listar_notas()
     # Un vault mal apuntado devuelve cero notas, y el purgado de abajo borraría el índice
@@ -545,8 +545,9 @@ def _build_con(c: sqlite3.Connection, force: bool) -> None:
         indexadas = c.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
         if indexadas:
             raise SystemExit(
-                f"el vault {VAULT} no tiene notas y el índice tiene {indexadas}: no toco nada "
-                "(¿OBS_RAG_VAULT apunta al lugar equivocado?). Si es a propósito: --force"
+                f"vault {VAULT} has no notes and the index has {indexadas}: not touching "
+                "anything (is OBS_RAG_VAULT pointing at the wrong place?). If it is on "
+                "purpose: --force"
             )
     _set_meta(c, "estado", "building")
     c.commit()
@@ -578,7 +579,7 @@ def _build_con(c: sqlite3.Connection, force: bool) -> None:
             continue
         changed.append((path, mt, body))
 
-    print(f"[build] vault={len(notes)}  sin cambios={same}  a reindexar={len(changed)}  fallidas={len(failed)}", flush=True)
+    print(f"[build] vault={len(notes)}  unchanged={same}  to_reindex={len(changed)}  failed={len(failed)}", flush=True)
 
     # PURGAR lo que ya no está en el vault: si no, el índice sólo crece y el RAG puede
     # devolver un path que no existe (el peor modo de falla para quien va a leerlo).
@@ -591,7 +592,7 @@ def _build_con(c: sqlite3.Connection, force: bool) -> None:
                 c.executemany("DELETE FROM postings WHERE chunk=?", [(i,) for i in ids])
         c.executemany("DELETE FROM chunks WHERE path=?", [(p,) for p in stale])
         c.executemany("DELETE FROM notes WHERE path=?", [(p,) for p in stale])
-        print(f"[build] purgadas {len(stale)} notas que ya no estan en el vault", flush=True)
+        print(f"[build] purged {len(stale)} notes that are no longer in the vault", flush=True)
 
     for i, (path, mt, body) in enumerate(changed, 1):
         # Chunks y vectores PRIMERO: si el embedding falla, la nota queda intacta porque
@@ -680,9 +681,9 @@ def _build_con(c: sqlite3.Connection, force: bool) -> None:
 
     total = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
     withvec = c.execute("SELECT COUNT(*) FROM chunks WHERE vec IS NOT NULL").fetchone()[0]
-    print(f"[build] listo: {len(notes)} notas, {total} chunks ({withvec} con embedding)", flush=True)
+    print(f"[build] done: {len(notes)} notes, {total} chunks ({withvec} with embeddings)", flush=True)
     if failed:
-        print(f"[build] fallidas: {len(failed)} -> {failed[:5]}", flush=True)
+        print(f"[build] failed: {len(failed)} -> {failed[:5]}", flush=True)
 
     # Un build NUNCA vuelve a pasar en silencio con notas afuera del índice:
     # verifica que cada nota listada del vault tenga su fila en `notes`.
@@ -692,11 +693,11 @@ def _build_con(c: sqlite3.Connection, force: bool) -> None:
         _set_meta(c, "estado", "failed")
         c.commit()
         print(
-            f"[build] ERROR: {len(failed)} ilegibles, {len(faltan)} sin indexar",
+            f"[build] ERROR: {len(failed)} unreadable, {len(faltan)} not indexed",
             file=sys.stderr, flush=True,
         )
         for p in faltan[:10]:
-            print(f"[build]   sin indexar: {p}", file=sys.stderr, flush=True)
+            print(f"[build]   not indexed: {p}", file=sys.stderr, flush=True)
         raise SystemExit(1)
     # Sólo un build que verificó todo se declara listo. Cualquier consumidor
     # (agente incluido) puede leer `meta.estado` y saber si el índice está entero.
@@ -707,7 +708,7 @@ def _build_con(c: sqlite3.Connection, force: bool) -> None:
     _set_meta(c, "indexado", time.time())
     _set_meta(c, "estado", "ready")
     c.commit()
-    print(f"[build] verificado: {len(indexed)}/{len(server_paths)} notas del índice", flush=True)
+    print(f"[build] verified: {len(indexed)}/{len(server_paths)} notes in the index", flush=True)
 
 
 _TOK = re.compile(r"[a-z0-9áéíóúüñ]+")
@@ -730,7 +731,7 @@ def tok(s: str) -> list[str]:
 
 
 def _texto_del_chunk(path: str, inicio: int | None, fin: int | None) -> str:
-    """Relee el chunk del vault por su rango de líneas: el índice no guarda el texto."""
+    """Re-read the chunk from the vault by its line range: the index stores no text."""
     if inicio is None or fin is None:
         return ""
     try:
@@ -770,11 +771,11 @@ def _penalizar(
 
 
 def _con_texto(c: sqlite3.Connection, elegidos: list[dict]) -> list[dict]:
-    """Agrega el texto a los k ganadores y limpia los campos internos.
+    """Add the text to the k winners and clear the internal fields.
 
-    El texto se relee del vault para k notas como máximo, no para el vault entero. Se
-    cachean las líneas por nota: varios chunks ganadores de la misma nota reabrían y
-    re-parteaban el mismo archivo una vez por chunk.
+    The text is re-read from the vault for at most k notes, not for the whole vault. Lines
+    are cached per note: several winning chunks from the same note reopened and re-split the
+    same file once per chunk.
     """
     ids = [r["_id"] for r in elegidos]
     rangos = {r[0]: (r[1], r[2], r[3]) for r in c.execute(
@@ -910,7 +911,7 @@ def _buscar_con(c: sqlite3.Connection, query: str, k: int, alpha: float,
                 continue
             out_lex.append({"path": path, "ord": o, "heading": h, "hlevel": hl,
                             "chunk_type": ct, "score": score, "sem": None, "_id": cid,
-                            "vencida": vencida, "stale_after": iso})
+                            "stale": vencida, "stale_after": iso})
         out_lex.sort(key=lambda r: -r["score"])
         return _con_texto(c, out_lex[:k])
 
@@ -938,14 +939,14 @@ def _buscar_con(c: sqlite3.Connection, query: str, k: int, alpha: float,
                 continue
             elegidos.append({"_id": r[1], "path": r[2], "ord": r[3], "heading": r[4],
                              "chunk_type": r[6], "score": score,
-                             "vencida": vencida, "stale_after": iso})
+                             "stale": vencida, "stale_after": iso})
         return _con_texto(c, elegidos)
     try:
         mat = np.frombuffer(b"".join(r[6] for r in filas), dtype=np.float32).reshape(len(filas), -1)
     except ValueError as exc:
         raise ValueError(
-            "el índice tiene vectores de distinto tamaño (¿cambiaste de modelo?): "
-            "corré `obsn reindex --force`"
+            "the index has vectors of different sizes (did you change models?): "
+            "run `obsn reindex --force`"
         ) from exc
     # Si el índice ya se construyó con vectores normalizados, no se normaliza de
     # nuevo: esa división costaba ~45 ms por consulta para no cambiar nada.
@@ -994,7 +995,7 @@ def _buscar_con(c: sqlite3.Connection, query: str, k: int, alpha: float,
         out.append({"path": path, "ord": o, "heading": h, "hlevel": hl,
                     "chunk_type": ct, "score": score, "sem": sem,
                     "_cob": cobertura, "_nota": nota_cob.get(path, 0.0), "_id": cid,
-                    "vencida": vencida, "stale_after": iso})
+                    "stale": vencida, "stale_after": iso})
     out.sort(key=lambda x: -x["score"])
 
     # 1) La NOTA cubre buena parte de lo específico de la consulta (aunque sea entre
@@ -1035,9 +1036,9 @@ _SEM_FLOOR = 0.62
 
 
 def _query_vector(query: str, c: sqlite3.Connection):
-    """Vector de la consulta, desde la caché `emb` si ya se calculó alguna vez.
+    """Query vector, from the `emb` cache if it was ever computed.
 
-    Cargar el modelo cuesta ~1,3 s: mirar la caché primero evita pagarlo de nuevo.
+    Loading the model costs ~1.3 s: checking the cache first avoids paying it again.
     """
     import numpy as np
     texto = f":: {query}"
@@ -1058,18 +1059,18 @@ def _main() -> None:
             ch = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
             vec = c.execute("SELECT COUNT(*) FROM chunks WHERE vec IS NOT NULL").fetchone()[0]
             last = c.execute("SELECT MAX(indexed_at) FROM notes").fetchone()[0]
-        print(f"notas={n} chunks={ch} con_embedding={vec} "
-              f"ultimo_index={time.strftime('%Y-%m-%d %H:%M', time.localtime(last)) if last else 'nunca'}")
+        print(f"notes={n} chunks={ch} embedded={vec} "
+              f"last_index={time.strftime('%Y-%m-%d %H:%M', time.localtime(last)) if last else 'never'}")
     elif cmd == "search":
         q = " ".join(sys.argv[2:-1]) if sys.argv[-1].isdigit() else " ".join(sys.argv[2:])
         k = int(sys.argv[-1]) if sys.argv[-1].isdigit() else 5
         t0 = time.perf_counter()
         res = search(q, k)
-        print(f"[{time.perf_counter()-t0:.3f}s] {len(res)} resultados para {q!r}")
+        print(f"[{time.perf_counter()-t0:.3f}s] {len(res)} results for {q!r}")
         for r in res:
             print(f"  {r['score']:.3f}  {r['path']} :: {r.get('heading')} ({r['chunk_type']})")
     else:
-        print("uso: obsn {reindex [--force]|status|rag 'consulta' [N]}")
+        print("usage: obsn {reindex [--force]|status|rag 'query' [N]}")
 
 
 if __name__ == "__main__":

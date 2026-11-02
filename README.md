@@ -41,7 +41,7 @@ To check it took, `obsn status` prints the vault and the index it is using:
 ```
 $ obsn status
 vault=/home/you/Documents/my-vault
-indice=/home/you/.local/share/obsidian-rag/index.db
+index=/home/you/.local/share/obsidian-rag/index.db
 ```
 
 Three things that cost people an afternoon:
@@ -150,7 +150,7 @@ The rules are deliberately small:
 | | |
 |---|---|
 | Semantics | stale when `now >= stale_after`; a date without a time means the end of that day, local |
-| No date | the note is `sin fecha`: it is not penalised and not filtered. Punishing the absence would turn "I don't know" into "it's false" |
+| No date | the note is `undated`: it is not penalised and not filtered. Punishing the absence would turn "I don't know" into "it's false" |
 | Ranking | a stale note's score is multiplied by `OBS_RAG_STALE_PENALTY` (default `0.75`). It slides down, it does not disappear |
 | Hard filter | only with `--fresh-only` (`fresh_only` in the plugin). Dropping stale notes by default would return "not found", which is the same lie in the other direction |
 
@@ -158,8 +158,8 @@ The rules are deliberately small:
 obsn rag "certificados" --fresh-only     # only notes that are still true
 obsn stale                               # what expired, and how long ago
 obsn stale --days 90 --json              # the worst offenders, machine-readable
-obsn status                              # adds vencidas / sin_fecha to the line
-obsn meta 02-infra/dns.md                # "vigencia: VENCIDA hace 76 días"
+obsn status                              # adds stale / undated to the line
+obsn meta 02-infra/dns.md                # "freshness: STALE, 76 days ago"
 ```
 
 The field name and its semantics are the ones from [OKF v0.2 §5.5](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md):
@@ -227,7 +227,7 @@ it is not a readable copy of the vault.
 Vectors are cached by a hash of the text plus the model. That is why `reindex --force` with a
 warm cache takes 7 s instead of 198.
 
-`obsn status` reports when the index was built (`indexado` in ISO, `antiguedad_min` in
+`obsn status` reports when the index was built (`indexed_at` in ISO, `age_min` in
 minutes) and how many notes it sees. That is what separates a fresh index from a three-day-old
 one when a search misses something it should find.
 

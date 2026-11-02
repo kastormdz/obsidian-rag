@@ -8,6 +8,19 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ## [Unreleased]
 
+### Changed
+
+- **El motor habla inglés**: toda la salida del CLI pasa a inglés — mensajes de build,
+  errores, `--help`, `status`, `meta`, `stale`, `graph`, `link` y `upgrade` — y también las
+  claves de `--json`: `notas`→`notes`, `con_embedding`→`embedded`, `sin_chunks`→`without_chunks`,
+  `vencidas`→`stale`, `sin_fecha`→`undated`, `por_vencer_7d`→`expiring_7d`, `modelo`→`model`,
+  `indexado`→`indexed_at`, `antiguedad_min`→`age_min`, `estado`→`state`; en cada hit,
+  `vencida`→`stale`. `obsn link --canonico` pasa a `--canonical` y `--umbral-canonico` a
+  `--canonical-threshold`. Si parseás `--json`, hay que actualizar las claves: es un cambio de
+  contrato, por eso sube la minor.
+- El vocabulario en español del tokenizador (stopwords) queda igual: es lo que hace que la
+  búsqueda léxica funcione sobre notas en español.
+
 ## [0.5.1] - 2026-11-02
 
 ### Changed

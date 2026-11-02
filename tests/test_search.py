@@ -165,9 +165,9 @@ class VigenciaEnRanking(unittest.TestCase):
     def test_vencida_sigue_apareciendo_y_se_marca(self) -> None:
         r = {x["path"]: x for x in self.idx.search("puerto del servicio", k=5)}
         self.assertIn("vencida.md", r)
-        self.assertTrue(r["vencida.md"]["vencida"])
+        self.assertTrue(r["vencida.md"]["stale"])
         self.assertGreater(r["vencida.md"]["score"], 0)
-        self.assertFalse(r["vigente.md"]["vencida"])
+        self.assertFalse(r["vigente.md"]["stale"])
 
     def test_fresh_only_excluye_vencidas(self) -> None:
         paths = [x["path"] for x in self.idx.search("puerto del servicio", k=5, fresh_only=True)]
@@ -207,7 +207,7 @@ class VigenciaSinFecha(unittest.TestCase):
     def test_vencida_es_none_cuando_no_hay_fecha(self) -> None:
         r = self.idx.search("puerto del servicio", k=5)
         self.assertTrue(r, "la nota sin fecha tiene que seguir apareciendo")
-        self.assertIsNone(r[0]["vencida"])
+        self.assertIsNone(r[0]["stale"])
         self.assertIsNone(r[0]["stale_after"])
 
 

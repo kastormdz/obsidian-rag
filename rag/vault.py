@@ -1,14 +1,14 @@
-"""Operaciones de vault sobre el FILESYSTEM, sin daemon.
+"""Vault operations against the FILESYSTEM, with no daemon.
 
-El cliente MCP hablaba con `localhost:8787` para todo el CRUD; ese daemon se retiró y
-las operaciones quedaron muertas. Este módulo las reimplementa contra los archivos, que
-es lo que el vault realmente es, y mantiene el contrato de cada función.
+The MCP client talked to `localhost:8787` for all CRUD; that daemon was retired and the
+operations died with it. This module reimplements them against the files, which is what the
+vault really is, and keeps each function's contract.
 
-Reglas de seguridad:
-  - Todo path se resuelve y se verifica que quede DENTRO del vault (no `..`, no symlinks
-    que salgan). Un agente nunca puede tocar `~/.ssh` por pasar `../../`.
-  - Las escrituras son atómicas (temporal + rename en el mismo filesystem).
-  - `borrar()` manda a `.trash/` con timestamp: reversible. `hard=True` es explícito.
+Safety rules:
+  - Every path is resolved and checked to stay INSIDE the vault (no `..`, no symlinks
+    pointing out). An agent can never touch `~/.ssh` by passing `../../`.
+  - Writes are atomic (temp file + rename on the same filesystem).
+  - `delete` goes to `.trash/` with a timestamp: reversible. `hard=True` is explicit.
 """
 
 from __future__ import annotations
@@ -20,45 +20,45 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
-from .config import VAULT  # una sola fuente de la ruta del vault
+from .config import VAULT  # single source for the vault path
 from .vigencia import fecha_local, vigencia
 
 EXCLUIDAS = {".obsidian", ".trash", ".git", ".stfolder", ".DS_Store"}
 
 
 class FueraDelVault(Exception):
-    """El path pedido sale del vault: se rechaza antes de tocar nada."""
+    """The requested path leaves the vault: rejected before touching anything."""
 
 
 def _resolver(path: str) -> Path:
-    """Path absoluto dentro del vault. Rechaza `..`, absolutos externos y symlinks que salgan."""
+    """Absolute path inside the vault. Rejects `..`, external absolutes and symlinks that leave."""
     crudo = (path or "").strip()
-    # Un path absoluto NO se reinterpreta como relativo: `write /etc/x.md` tiene que fallar,
-    # no crear `<vault>/etc/x.md` (el usuario creería que escribió en /etc).
+    # An absolute path is NOT reinterpreted as relative: `write /etc/x.md` has to fail,
+    # not create `<vault>/etc/x.md` (the user would believe it wrote to /etc).
     if crudo.startswith("/"):
-        raise FueraDelVault(f"path absoluto: usá una ruta relativa al vault ({crudo})")
+        raise FueraDelVault(f"absolute path: use a path relative to the vault ({crudo})")
     limpio = crudo
-    # Los DOS lados resueltos: si el vault vive bajo un symlink (TMPDIR, /tmp → /private/tmp),
-    # resolver solo el destino hace que `relative_to` falle con paths que SÍ están adentro.
+    # BOTH sides resolved: if the vault lives under a symlink (TMPDIR, /tmp → /private/tmp),
+    # resolving only the destination makes `relative_to` fail for paths that ARE inside.
     raiz = VAULT.resolve()
     destino = (raiz / limpio).resolve()
     try:
         destino.relative_to(raiz)
     except ValueError as error:
-        raise FueraDelVault(f"fuera del vault: {path}") from error
+        raise FueraDelVault(f"outside the vault: {path}") from error
     return destino
 
 
 def _rel(destino: Path) -> str:
-    """Path relativo al vault, para mostrar. NO sigue el último symlink si no hace falta.
+    """Path relative to the vault, for display. Does NOT follow the last symlink if not needed.
 
-    Un `alias.md -> real.md` es una nota con nombre propio: resolverla hacía que `list`
-    mostrara `real.md` dos veces y `alias.md` nunca.
+    An `alias.md -> real.md` is a note with its own name: resolving it made `list` show
+    `real.md` twice and `alias.md` never.
     """
     d = destino if destino.is_absolute() else (VAULT / destino)
     for base in (VAULT, VAULT.resolve()):
-        # Se prueban las dos bases: `_recorrer` camina la raíz RESUELTA, y `_resolver`
-        # devuelve paths resueltos; comparar contra una sola fallaba según de dónde viniera.
+        # Both bases are tried: `_recorrer` walks the RESOLVED root, and `_resolver` returns
+        # resolved paths; comparing against only one failed depending on where it came from.
         try:
             return d.relative_to(base).as_posix()
         except ValueError:
@@ -67,10 +67,10 @@ def _rel(destino: Path) -> str:
 
 
 def _con_md(path: str) -> str:
-    """Agrega `.md` si falta. La misma regla para leer, editar, mover y borrar.
+    """Append `.md` when missing. Same rule for read, edit, move and delete.
 
-    Antes sólo `write_note` lo hacía: `move_note("a.md", "b")` dejaba un archivo sin
-    extensión, invisible para el vault y para el índice.
+    Before, only `write_note` did it: `move_note("a.md", "b")` left a file with no
+    extension, invisible to the vault and to the index.
     """
     limpio = (path or "").strip().rstrip("/")
     if limpio and not limpio.lower().endswith(".md"):
@@ -79,29 +79,29 @@ def _con_md(path: str) -> str:
 
 
 def _dentro(destino: Path, pedido: str) -> Path:
-    """Revalida que un path YA transformado siga dentro del vault.
+    """Re-check that an ALREADY transformed path is still inside the vault.
 
-    Hace falta porque transformar el nombre puede sacarlo: `write "."` resuelve a la raíz
-    del vault y `with_suffix(".md")` la convierte en `<vault>.md`, es decir un archivo AL
-    LADO del vault. Medido 2026-10-24: creaba el archivo fuera antes de fallar.
+    It is needed because transforming the name can move it out: `write "."` resolves to the
+    vault root and `with_suffix(".md")` turns it into `<vault>.md`, a file NEXT TO the vault.
+    Measured 2026-10-24: it created the file outside before failing.
     """
     raiz = VAULT.resolve()
     resuelto = destino.resolve()
     if not resuelto.is_relative_to(raiz):
-        raise FueraDelVault(f"fuera del vault: {pedido!r}")
+        raise FueraDelVault(f"outside the vault: {pedido!r}")
     return resuelto
 
 
 def dentro_del_vault(abs_: Path | str, raiz: Path | str | None = None) -> bool:
-    """¿El path RESUELTO sigue dentro del vault?
+    """Is the RESOLVED path still inside the vault?
 
-    `Path.resolve()` sigue los symlinks, así que un `nota.md -> ~/.ssh/id_ed25519` da
-    `False`. Es el único chequeo que sirve: comparar el path sin resolver deja pasar
-    cualquier link que apunte afuera.
+    `Path.resolve()` follows symlinks, so a `note.md -> ~/.ssh/id_ed25519` yields `False`.
+    It is the only check that works: comparing the unresolved path lets any link pointing
+    outside through.
 
-    `raiz` se pasa explícita cuando el llamador tiene su propia copia de `VAULT` (el índice
-    la tiene, y en los tests el vault es temporal): validar contra otra raíz rechazaría
-    notas legítimas.
+    `raiz` is passed explicitly when the caller has its own copy of `VAULT` (the index does,
+    and in tests the vault is temporary): validating against another root would reject
+    legitimate notes.
     """
     base = Path(raiz if raiz is not None else VAULT).resolve()
     try:
@@ -112,11 +112,11 @@ def dentro_del_vault(abs_: Path | str, raiz: Path | str | None = None) -> bool:
 
 
 def notas_del_vault() -> dict[str, str]:
-    """Todas las notas del vault, confinadas, con su texto.
+    """Every note in the vault, confined, with its text.
 
-    Punto ÚNICO para los caminos que caminan el vault por su cuenta (índice, grafo,
-    enlaces). Antes cada uno hacía su propio `os.walk`/`rglob` y ninguno filtraba
-    symlinks: un link a un archivo de afuera se leía y quedaba indexado.
+    The SINGLE entry point for the code that walks the vault on its own (index, graph,
+    links). Before, each one did its own `os.walk`/`rglob` and none filtered symlinks: a
+    link to a file outside was read and ended up indexed.
     """
     raiz = VAULT.resolve()
     notas: dict[str, str] = {}
@@ -136,12 +136,12 @@ def notas_del_vault() -> dict[str, str]:
 
 
 def _recorrer() -> Iterable[Path]:
-    """Notas visibles del vault, confinadas.
+    """Visible notes in the vault, confined.
 
-    Es el punto que usan `list`, `search`, `tags` y `meta`. Antes caminaba el vault sin
-    filtrar symlinks ni ocultos: un `nota.md -> ~/.ssh/id_ed25519` se leía, y `_rel`
-    moría con `ValueError` abortando el comando entero. Ahora usa el mismo confinamiento
-    que `notas_del_vault()`.
+    It is the entry point used by `list`, `search`, `tags` and `meta`. Before, it walked the
+    vault without filtering symlinks or hidden files: a `note.md -> ~/.ssh/id_ed25519` was
+    read, and `_rel` died with `ValueError`, aborting the whole command. Now it uses the same
+    confinement as `notas_del_vault()`.
     """
     raiz = VAULT.resolve()
     for actual, dirs, archivos in os.walk(raiz, followlinks=False):
@@ -161,8 +161,8 @@ def _leer(destino: Path) -> str:
 def _escribir_atomico(destino: Path, contenido: str) -> None:
     destino.parent.mkdir(parents=True, exist_ok=True)
     temporal = destino.with_name(f".{destino.name}.tmp-{os.getpid()}")
-    # fsync ANTES del rename: sin esto, un corte de luz puede dejar el rename hecho y el
-    # contenido todavía en el page cache (archivo vacío o truncado). Cuesta ~1 ms.
+    # fsync BEFORE the rename: without it, a power cut can leave the rename done and the
+    # content still in the page cache (empty or truncated file). Costs ~1 ms.
     with open(temporal, "w", encoding="utf-8") as fh:
         fh.write(contenido)
         fh.flush()
@@ -195,8 +195,8 @@ def _frontmatter(texto: str) -> dict[str, Any]:
             clave, _, valor = linea.partition(":")
             clave = clave.strip()
             valor = valor.strip().strip("'\"")
-            # Lista INLINE (`tags: [alfa, beta]`): sin esto el valor queda como string y
-            # quien lo recorra termina iterando CARACTERES.
+            # INLINE list (`tags: [alpha, beta]`): without this the value stays a string and
+            # whoever iterates it ends up iterating CHARACTERS.
             if valor.startswith("[") and valor.endswith("]"):
                 datos[clave] = [
                     x.strip().strip("'\"") for x in valor[1:-1].split(",") if x.strip()
@@ -207,15 +207,15 @@ def _frontmatter(texto: str) -> dict[str, Any]:
 
 
 def frontmatter(texto: str) -> dict[str, Any]:
-    """Frontmatter como dict. Alias público de `_frontmatter` para otros módulos."""
+    """Frontmatter as a dict. Public alias of `_frontmatter` for other modules."""
     return _frontmatter(texto)
 
 
 def _tags_del_texto(texto: str) -> set[str]:
-    """Tags inline, sin los `#` de bloques de código (`#!/bin/bash`, comentarios de YAML).
+    """Inline tags, without the `#` of code blocks (`#!/bin/bash`, YAML comments).
 
-    Un `#r` de un script es indistinguible de un tag si no se mira el contexto: se saltan
-    los bloques cercados y se exige un mínimo de 2 caracteres.
+    An `#r` in a script is indistinguishable from a tag unless the context is checked: fenced
+    blocks are skipped and a minimum of 2 characters is required.
     """
     encontrados: set[str] = set()
     en_bloque = False
@@ -224,7 +224,7 @@ def _tags_del_texto(texto: str) -> set[str]:
         if limpia.startswith("```"):
             en_bloque = not en_bloque
             continue
-        # Un heading no es un tag, y dentro de un bloque de código `#` es un comentario.
+        # A heading is not a tag, and inside a code block `#` is a comment.
         if en_bloque or re.match(r"#{1,6}\s", limpia):
             continue
         for etiqueta in re.findall(r"(?<![\w/\[\]{},:])(?<!#)#([A-Za-z][A-Za-z0-9_/-]{1,})", linea):
@@ -232,12 +232,12 @@ def _tags_del_texto(texto: str) -> set[str]:
     return encontrados
 
 
-# --------------------------------------------------------------------- operaciones
+# --------------------------------------------------------------------- operations
 
 
 def list_notes(folder: str | None = None, limit: int | None = None, tag: str | None = None,
                sort_by: str = "modified", **_: Any) -> list[dict[str, str]]:
-    """Notas del vault: `[{name, url}]` como el cliente MCP. Filtra carpeta y tag."""
+    """Vault notes: `[{name, url}]` like the MCP client. Filters by folder and tag."""
     base = _resolver(folder) if folder else VAULT
     encontradas: list[tuple[float, Path]] = []
     for destino in _recorrer():
@@ -257,37 +257,37 @@ def list_notes(folder: str | None = None, limit: int | None = None, tag: str | N
 
 
 def read_note(path: str) -> str:
-    """Contenido completo de la nota."""
+    """Full note content."""
     destino = _resolver(_con_md(path))
     if not destino.is_file():
-        raise FileNotFoundError(f"no existe la nota: {path}")
+        raise FileNotFoundError(f"no such note: {path}")
     return _leer(destino)
 
 
 def write_note(path: str, content: str) -> str:
-    """Crea o sobreescribe (atómico). Devuelve una línea con el resultado."""
+    """Create or overwrite (atomic). Returns one line with the result."""
     destino = _resolver(path)
     if destino.is_dir():
-        raise ValueError(f"es una carpeta, no una nota: {path!r}")
+        raise ValueError(f"that is a folder, not a note: {path!r}")
     if destino.suffix.lower() != ".md":
-        # Revalidar SIEMPRE después de cambiar el nombre: con `path=""` o `"."` el
-        # `with_suffix` apunta al lado del vault, no adentro.
+        # Re-validate ALWAYS after changing the name: with `path=""` or `"."`, `with_suffix`
+        # points next to the vault, not inside it.
         destino = _dentro(destino.with_suffix(".md"), path)
     existia = destino.is_file()
     _escribir_atomico(destino, content)
-    accion = "actualizada" if existia else "creada"
+    accion = "updated" if existia else "created"
     return f"{accion}: {_rel(destino)} ({len(content)} bytes)"
 
 
 def edit_note(path: str, op: str, content: str, old: str | None = None) -> str:
-    """append | prepend | replace. `replace` cambia la primera aparición de `old`.
+    """append | prepend | replace. `replace` changes the first occurrence of `old`.
 
-    `old` va como parámetro y no serializado dentro de `content`: con el separador `\n`
-    anterior, un bloque viejo multilínea se partía en el primer salto y corrompía la nota.
+    `old` is a parameter and not serialized inside `content`: with the previous `\n`
+    separator, an old multiline block was split at the first newline and corrupted the note.
     """
     destino = _resolver(_con_md(path))
     if not destino.is_file():
-        raise FileNotFoundError(f"no existe la nota: {path}")
+        raise FileNotFoundError(f"no such note: {path}")
     actual = _leer(destino)
     if op == "append":
         nuevo = actual.rstrip("\n") + "\n" + content
@@ -296,36 +296,36 @@ def edit_note(path: str, op: str, content: str, old: str | None = None) -> str:
     elif op == "replace":
         if not old:
             raise ValueError(
-                "replace necesita el texto viejo: obsn edit <path> replace <nuevo> --old <viejo>"
+                "replace needs the old text: obsn edit <path> replace <new> --old <old>"
             )
         if old not in actual:
-            raise ValueError("replace: el texto viejo no está en la nota")
+            raise ValueError("replace: the old text is not in the note")
         nuevo = actual.replace(old, content, 1)
     elif op == "replace-old-new":
         raise ValueError(
-            "replace-old-new se eliminó: usá `replace` y pasá el texto viejo en --old"
+            "replace-old-new was removed: use `replace` and pass the old text in --old"
         )
     else:
-        raise ValueError(f"operación desconocida: {op} (append|prepend|replace)")
+        raise ValueError(f"unknown operation: {op} (append|prepend|replace)")
     _escribir_atomico(destino, nuevo)
-    return f"editada ({op}): {_rel(destino)}"
+    return f"edited ({op}): {_rel(destino)}"
 
 
 def delete_note(path: str, hard: bool = False) -> str:
-    """Borra: por defecto manda a `.trash/` con timestamp (reversible)."""
+    """Delete: by default sends it to `.trash/` with a timestamp (reversible)."""
     destino = _resolver(_con_md(path))
     if not destino.is_file():
-        raise FileNotFoundError(f"no existe la nota: {path}")
+        raise FileNotFoundError(f"no such note: {path}")
     if hard:
         destino.unlink()
-        return f"BORRADA (definitivo): {_rel(destino)}"
+        return f"DELETED (permanent): {_rel(destino)}"
     papelera = VAULT / ".trash"
     papelera.mkdir(exist_ok=True)
     sello = time.strftime("%Y%m%d-%H%M%S")
     rel = _rel(destino)
-    # Dos notas homónimas en carpetas distintas, borradas en el mismo segundo, iban al
-    # MISMO archivo: `shutil.move` pisaba la primera y esa nota se perdía. Se conserva la
-    # carpeta de origen en el nombre y, si aun así colisiona, se numera.
+    # Two same-named notes in different folders, deleted in the same second, went to the
+    # SAME file: `shutil.move` overwrote the first and that note was lost. The source folder
+    # is kept in the name and, if it still collides, a counter is appended.
     nombre = f"{rel.replace('/', '__')} ({sello})"
     destino_movido = papelera / f"{nombre}{destino.suffix}"
     n = 1
@@ -333,24 +333,24 @@ def delete_note(path: str, hard: bool = False) -> str:
         destino_movido = papelera / f"{nombre}-{n}{destino.suffix}"
         n += 1
     shutil.move(str(destino), str(destino_movido))
-    return f"a la papelera: {rel} -> .trash/{destino_movido.name}"
+    return f"to trash: {rel} -> .trash/{destino_movido.name}"
 
 
 def move_note(from_path: str, to_path: str) -> str:
-    """Mueve o renombra. No pisa un archivo existente."""
+    """Move or rename. Never overwrites an existing file."""
     origen = _resolver(_con_md(from_path))
     destino = _resolver(_con_md(to_path))
     if not origen.is_file():
-        raise FileNotFoundError(f"no existe la nota: {from_path}")
+        raise FileNotFoundError(f"no such note: {from_path}")
     if destino.exists():
-        raise FileExistsError(f"ya existe: {to_path}")
+        raise FileExistsError(f"already exists: {to_path}")
     destino.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(origen), str(destino))
-    return f"movida: {_rel(origen)} -> {_rel(destino)}"
+    return f"moved: {_rel(origen)} -> {_rel(destino)}"
 
 
 def list_folders() -> str:
-    """Carpetas con cantidad de notas, ordenadas."""
+    """Folders with their note count, sorted."""
     conteo: dict[str, int] = {}
     for destino in _recorrer():
         carpeta = destino.parent.relative_to(VAULT).as_posix()
@@ -361,15 +361,15 @@ def list_folders() -> str:
             carpeta = str(Path(carpeta).parent.as_posix())
             if carpeta == ".":
                 carpeta = ""
-    lineas = [f"{n:5d}  {c or '(raíz)'}" for c, n in sorted(conteo.items())]
+    lineas = [f"{n:5d}  {c or '(root)'}" for c, n in sorted(conteo.items())]
     return "\n".join(lineas)
 
 
 def _tags_frontmatter(texto: str) -> set[str]:
-    """Tags declarados en el frontmatter, siempre como set de strings válidos.
+    """Tags declared in the frontmatter, always as a set of valid strings.
 
-    El frontmatter puede traer una lista (`[a, b]`), una lista en bloque (`- a`) o un
-    string suelto. Centralizarlo acá evita el bug de iterar los CARACTERES del string.
+    The frontmatter may hold a list (`[a, b]`), a block list (`- a`) or a bare string.
+    Centralizing it here avoids the bug of iterating the CHARACTERS of the string.
     """
     valor = _frontmatter(texto).get("tags", [])
     crudos = valor if isinstance(valor, list) else [valor]
@@ -381,7 +381,7 @@ def _tags_frontmatter(texto: str) -> set[str]:
 
 
 def list_tags() -> str:
-    """Tags del frontmatter y del cuerpo, con frecuencia."""
+    """Tags from the frontmatter and the body, with their frequency."""
     frecuencia: dict[str, int] = {}
     for destino in _recorrer():
         texto = _leer(destino)
@@ -393,16 +393,16 @@ def list_tags() -> str:
 
 
 def get_note_metadata(path: str) -> str:
-    """Frontmatter, tags, tamaño, fechas y backlinks."""
+    """Frontmatter, tags, size, dates and backlinks."""
     destino = _resolver(_con_md(path))
     if not destino.is_file():
-        raise FileNotFoundError(f"no existe la nota: {path}")
+        raise FileNotFoundError(f"no such note: {path}")
     texto = _leer(destino)
     datos = _frontmatter(texto)
     stat = destino.stat()
     enlaces = re.findall(r"\[\[([^\]|#]+)", texto)
-    # Obsidian resuelve un wikilink por nombre de archivo, por TÍTULO o por alias. Buscar solo
-    # por `stem` pierde `[[Nota Uno]]` cuando el archivo se llama `uno.md`.
+    # Obsidian resolves a wikilink by file name, by TITLE or by alias. Searching only by
+    # `stem` misses `[[Note One]]` when the file is called `one.md`.
     nombres = {destino.stem, _titulo(texto, destino)}
     alias = datos.get("aliases") or datos.get("alias") or []
     nombres |= {str(a) for a in (alias if isinstance(alias, list) else [alias])}
@@ -411,45 +411,45 @@ def get_note_metadata(path: str) -> str:
         if otra.resolve() == destino:
             continue
         contenido = _leer(otra)
-        # Wikilink EXACTO: `[[uno` no es un link a `uno.md` si el link dice `[[uno-dos]]`.
-        # Antes se matcheaba por prefijo y cualquier nota era backlink de sus homónimas.
+        # EXACT wikilink: `[[one` is not a link to `one.md` if the link says `[[one-two]]`.
+        # It used to match by prefix and any note was a backlink of its homonyms.
         if any(re.search(r"\[\[" + re.escape(str(n)) + r"(?:\]\]|\||#)", contenido)
                for n in nombres if n):
             backlinks.append(_rel(otra))
-    # `tags: infra` (escalar) no es una lista: `sorted("infra")` devolvía a, f, i, n, r.
+    # `tags: infra` (scalar) is not a list: `sorted("infra")` returned a, f, i, n, r.
     tags = datos.get("tags") or []
     if isinstance(tags, str):
         tags = [tags]
     lineas = [
         f"path: {_rel(destino)}",
-        f"titulo: {_titulo(texto, destino)}",
+        f"title: {_titulo(texto, destino)}",
         f"bytes: {stat.st_size}",
-        f"modificado: {time.strftime('%Y-%m-%d %H:%M', time.localtime(stat.st_mtime))}",
-        f"palabras: {len(texto.split())}",
-        f"tags: {', '.join(sorted(str(t) for t in tags)) if tags else '(ninguno)'}",
+        f"modified: {time.strftime('%Y-%m-%d %H:%M', time.localtime(stat.st_mtime))}",
+        f"words: {len(texto.split())}",
+        f"tags: {', '.join(sorted(str(t) for t in tags)) if tags else '(none)'}",
     ]
     for clave, valor in datos.items():
         if clave not in ("tags", "stale_after", "updated"):
             lineas.append(f"{clave}: {valor}")
     v = vigencia(datos)
     if v["stale_after"]:
-        estado = (f"VENCIDA hace {v['dias_vencida']} días" if v["vencida"] else "vigente")
-        lineas.append(f"vigencia: {estado} (vence {fecha_local(v['stale_after'])})")
+        estado = (f"STALE, {v['days_stale']} days ago" if v["stale"] else "fresh")
+        lineas.append(f"freshness: {estado} (expires {fecha_local(v['stale_after'])})")
     else:
-        lineas.append("vigencia: sin fecha declarada")
+        lineas.append("freshness: no date declared")
     if v["updated"]:
-        lineas.append(f"actualizado: {fecha_local(v['updated'])}")
-    lineas.append(f"enlaces salientes: {len(enlaces)}")
+        lineas.append(f"updated: {fecha_local(v['updated'])}")
+    lineas.append(f"outgoing links: {len(enlaces)}")
     lineas.append(f"backlinks: {len(backlinks)}" + (f" -> {', '.join(backlinks[:8])}" if backlinks else ""))
     return "\n".join(lineas)
 
 
 def search_notes(terms: Iterable[str] | str, folder: str | None = None, tag: str | None = None,
                  limit: int = 20, **_: Any) -> list[dict[str, Any]]:
-    """Substring case-insensitive por CONTENIDO (el `rag` es el semántico).
+    """Case-insensitive substring over CONTENT (`rag` is the semantic one).
 
-    Rankea primero los aciertos en path o título, después por cantidad de términos.
-    Devuelve una línea de contexto por hit, nunca el cuerpo entero.
+    Ranks path or title hits first, then by number of terms. Returns one line of context per
+    hit, never the whole body.
     """
     lista = [terms] if isinstance(terms, str) else list(terms)
     lista = [t for t in (str(x).strip().lower() for x in lista) if t]

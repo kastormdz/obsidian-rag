@@ -45,35 +45,35 @@ class Veredicto(unittest.TestCase):
     def test_vencida(self):
         # vence el 30 a las 23:59:59 y "ahora" es el 1 a las 12:00 => 1 día y 12 h
         v = vigencia({"stale_after": "2026-10-30"}, ahora=self.ahora, tz="UTC")
-        self.assertTrue(v["vencida"])
-        self.assertEqual(v["dias_vencida"], 1)
+        self.assertTrue(v["stale"])
+        self.assertEqual(v["days_stale"], 1)
         self.assertEqual(v["stale_after"], "2026-10-30T23:59:59+00:00")
 
     def test_vencida_hace_horas_es_cero_dias(self):
         v = vigencia({"stale_after": "2026-10-31"}, ahora=self.ahora, tz="UTC")
-        self.assertTrue(v["vencida"])
-        self.assertEqual(v["dias_vencida"], 0)
+        self.assertTrue(v["stale"])
+        self.assertEqual(v["days_stale"], 0)
 
     def test_vigente(self):
         v = vigencia({"stale_after": "2026-12-31"}, ahora=self.ahora, tz="UTC")
-        self.assertFalse(v["vencida"])
-        self.assertIsNone(v["dias_vencida"])
+        self.assertFalse(v["stale"])
+        self.assertIsNone(v["days_stale"])
 
     def test_sin_fecha_no_opina(self):
         v = vigencia({}, ahora=self.ahora)
-        self.assertIsNone(v["vencida"])
+        self.assertIsNone(v["stale"])
         self.assertIsNone(v["stale_after"])
         self.assertIsNone(v["updated"])
 
     def test_fecha_invalida_es_sin_fecha(self):
         v = vigencia({"stale_after": "no es una fecha"}, ahora=self.ahora)
-        self.assertIsNone(v["vencida"])
+        self.assertIsNone(v["stale"])
 
     def test_updated_se_guarda_pero_no_decide(self):
         v = vigencia({"updated": "2026-01-01", "stale_after": "2027-01-01"},
                      ahora=self.ahora, tz="UTC")
         self.assertEqual(v["updated"], "2026-01-01T23:59:59+00:00")
-        self.assertFalse(v["vencida"])
+        self.assertFalse(v["stale"])
 
     def test_resumen_dice_el_total(self):
         self.assertIn("203", resumen(12, 5, 203))

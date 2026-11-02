@@ -74,7 +74,7 @@ def main() -> int:
         # 1) sin índice: status tiene que avisar, no explotar con traceback
         p = correr("status")
         check("status sin índice sale con código 1", p.returncode == 1, f"rc={p.returncode}")
-        check("status sin índice lo dice en castellano", "no hay índice" in (p.stderr + p.stdout).lower())
+        check("status sin índice lo dice en inglés", "no index" in (p.stderr + p.stdout).lower())
 
         # 2) escritura por stdin + lectura
         p = correr("write", "02-docs/uno.md", stdin="# Uno\n\nContenido sobre certificados wildcard y renovación automática.\n")
@@ -84,7 +84,7 @@ def main() -> int:
 
         # 3) reindex + búsqueda
         p = correr("reindex")
-        check("reindex construye", p.returncode == 0 and "verificado" in p.stdout, p.stderr[-300:])
+        check("reindex construye", p.returncode == 0 and "verified" in p.stdout, p.stderr[-300:])
         p = correr("rag", "certificados", "3")
         check("rag encuentra la nota recién indexada", "uno.md" in p.stdout, p.stdout[:300])
 
@@ -129,10 +129,10 @@ def main() -> int:
         check("delete deja la nota en .trash", any((vault / ".trash").iterdir()), "sin .trash")
         p = correr("reindex")
         check("reindex se niega a vaciar el índice si el vault quedó sin notas",
-              p.returncode == 1 and "apunta al lugar equivocado" in p.stderr, p.stderr[-300:])
+              p.returncode == 1 and "pointing at the wrong place" in p.stderr, p.stderr[-300:])
         p = correr("reindex", "--force")
         check("reindex --force sí purga la última nota",
-              p.returncode == 0 and "purgadas" in p.stdout, p.stdout[-300:])
+              p.returncode == 0 and "purged" in p.stdout, p.stdout[-300:])
         p = correr("rag", "buchovial-8891", "3")
         check("rag ya no devuelve la nota borrada", "renombrada.md" not in p.stdout, p.stdout[:300])
 
@@ -152,18 +152,18 @@ def main() -> int:
             est = None
         check("status --json emite JSON válido", est is not None, p.stdout[:200])
         check("status reporta 0 notas después de borrar la única",
-              bool(est) and est.get("notas") == 0, str(est)[:200])
+              bool(est) and est.get("notes") == 0, str(est)[:200])
         check("status distingue notas de notas sin chunks",
-              bool(est) and "sin_chunks" in est, str(est)[:200])
+              bool(est) and "without_chunks" in est, str(est)[:200])
 
         # 10) upgrade: el ciclo completo sin salir a la red
         p = correr("--version")
         check("--version imprime la versión", "obsn" in p.stdout and p.returncode == 0, p.stdout[:120])
         p = correr("upgrade", "--how")
-        check("upgrade --how explica el procedimiento", p.returncode == 0 and "actualiz" in p.stdout.lower(),
+        check("upgrade --how explica el procedimiento", p.returncode == 0 and "update" in p.stdout.lower(),
               p.stdout[:200])
         p = correr("upgrade", "--check")
-        sin_red = p.returncode == 1 and "no pude consultar" in (p.stderr + p.stdout)
+        sin_red = p.returncode == 1 and "could not query" in (p.stderr + p.stdout)
         check("upgrade --check responde (al día / hay update)",
               p.returncode in (0, 10) or sin_red, f"rc={p.returncode} {p.stderr[:150]}")
 

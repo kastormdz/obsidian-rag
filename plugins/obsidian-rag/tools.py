@@ -95,7 +95,7 @@ def search(args: dict, **kwargs) -> str:
                     "score": round(float(r.get("score") or 0), 3),
                     "snippet": _snippet(r.get("text", "")),
                     # None = the note declares no date; that is not the same as "fresh".
-                    "stale": r.get("vencida"),
+                    "stale": r.get("stale"),
                     "stale_after": (r.get("stale_after") or "")[:10] or None,
                 })
                 if len(hits) >= limit:

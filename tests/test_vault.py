@@ -77,7 +77,7 @@ class VaultTemporal(unittest.TestCase):
 
     def test_write_crea_y_agrega_extension(self) -> None:
         salida = vault.write_note("C/nueva", "cuerpo")
-        self.assertIn("creada", salida)
+        self.assertIn("created", salida)
         self.assertTrue((self.raiz / "C" / "nueva.md").is_file())
 
     def test_write_es_atomico(self) -> None:
@@ -91,7 +91,7 @@ class VaultTemporal(unittest.TestCase):
         vault.edit_note("B/dos.md", "prepend", "arriba\n")
         self.assertTrue(vault.read_note("B/dos.md").startswith("arriba"))
         salida = vault.edit_note("B/dos.md", "replace", "COLA", old="cola")
-        self.assertIn("editada", salida)
+        self.assertIn("edited", salida)
         self.assertIn("COLA", vault.read_note("B/dos.md"))
 
     def test_replace_con_texto_ausente_falla(self) -> None:
@@ -106,7 +106,7 @@ class VaultTemporal(unittest.TestCase):
 
     def test_delete_va_a_la_papelera(self) -> None:
         salida = vault.delete_note("A/uno.md")
-        self.assertIn("papelera", salida)
+        self.assertIn("to trash", salida)
         self.assertFalse((self.raiz / "A" / "uno.md").exists())
         self.assertEqual(len(list((self.raiz / ".trash").iterdir())), 1)
 
@@ -159,7 +159,7 @@ class VaultTemporal(unittest.TestCase):
     def test_write_a_una_carpeta_falla_claro(self) -> None:
         with self.assertRaises(ValueError) as ctx:
             vault.write_note("A", "contenido")
-        self.assertIn("carpeta", str(ctx.exception).lower())
+        self.assertIn("folder", str(ctx.exception).lower())
 
     def test_borrar_dos_notas_homonimas_no_pierde_ninguna(self) -> None:
         # Mismo nombre en carpetas distintas, borradas en el mismo segundo: iban al mismo

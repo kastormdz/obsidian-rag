@@ -110,7 +110,7 @@ STATUS = {
     "name": "vault_status",
     "description": (
         "Index status: active vault, note and chunk counts, embedding model, notes with no "
-        "indexable content, how long ago it was indexed (antiguedad_min) and how many notes "
+        "indexable content, how long ago it was indexed (age_min) and how many notes "
         "are stale or undated. Use it when a search returns nothing that should exist, to "
         "rule out a stale index or one pointing at another vault."
     ),

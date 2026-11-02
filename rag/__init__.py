@@ -1,5 +1,5 @@
-"""obsidian-rag: búsqueda semántica y operaciones de archivo sobre un vault de Obsidian.
+"""obsidian-rag: semantic search and file operations over an Obsidian vault.
 
-La versión sale de `pyproject.toml` (una sola fuente); se consulta con
-`obsn --version` vía importlib.metadata.
+The version comes from `pyproject.toml` (a single source); it is read with
+`obsn --version` through importlib.metadata.
 """

@@ -117,7 +117,7 @@ class BuildTransaccional(unittest.TestCase):
             nota.unlink()
         with self.assertRaises(SystemExit) as ctx:
             self.idx.build()
-        self.assertIn("apunta al lugar equivocado", str(ctx.exception))
+        self.assertIn("pointing at the wrong place", str(ctx.exception))
         self.assertEqual(self._n_chunks("buena.md"), 1, "se purgó el índice sin permiso")
         # Con --force sí se puede vaciar a propósito
         self.idx.build(force=True)
@@ -171,8 +171,8 @@ class ErroresDeCli(unittest.TestCase):
                 config.DB = previo
 
         datos = json.loads(salida.getvalue())
-        self.assertGreaterEqual(datos["antiguedad_min"], 59)
-        self.assertRegex(datos["indexado"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$")
+        self.assertGreaterEqual(datos["age_min"], 59)
+        self.assertRegex(datos["indexed_at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$")
 
     def test_list_limit_negativo_se_rechaza(self) -> None:
         from rag import obsn
@@ -207,7 +207,7 @@ class ErroresDeCli(unittest.TestCase):
             finally:
                 config.VAULT, vault_mod.VAULT = previo_cfg, previo_vault
         self.assertEqual(rc, 0)
-        self.assertIn("notas=2", salida.getvalue())
+        self.assertIn("notes=2", salida.getvalue())
 
 
 class VigenciaEnElIndice(unittest.TestCase):

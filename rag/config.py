@@ -1,8 +1,8 @@
-"""Rutas y constantes del paquete. Todo configurable por entorno, sin rutas personales.
+"""Package paths and constants. Everything configurable through the environment, no personal paths.
 
-    OBS_RAG_VAULT   vault a indexar          (default: ~/Obsidian)
-    OBS_RAG_INDEX   archivo SQLite del índice (default: $XDG_DATA_HOME/obsidian-rag/index.db)
-    OBS_RAG_CACHE   caché del modelo         (default: $XDG_CACHE_HOME/fastembed)
+    OBS_RAG_VAULT   vault to index            (default: ~/Obsidian)
+    OBS_RAG_INDEX   index SQLite file         (default: $XDG_DATA_HOME/obsidian-rag/index.db)
+    OBS_RAG_CACHE   model cache               (default: $XDG_CACHE_HOME/fastembed)
 """
 
 from __future__ import annotations

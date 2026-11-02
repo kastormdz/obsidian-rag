@@ -42,7 +42,7 @@ Para comprobar que quedó bien, `obsn status` imprime el vault y el índice que 
 ```
 $ obsn status
 vault=/home/vos/Documentos/mi-vault
-indice=/home/vos/.local/share/obsidian-rag/index.db
+index=/home/vos/.local/share/obsidian-rag/index.db
 ```
 
 Tres cosas que cuestan una tarde:
@@ -152,7 +152,7 @@ Las reglas son a propósito chiquitas:
 | | |
 |---|---|
 | Semántica | vencida cuando `now >= stale_after`; una fecha sin hora vale hasta el final de ese día, en local |
-| Sin fecha | la nota queda `sin fecha`: no se penaliza ni se filtra. Castigar la ausencia convierte "no sé" en "es falso" |
+| Sin fecha | la nota queda `undated`: no se penaliza ni se filtra. Castigar la ausencia convierte "no sé" en "es falso" |
 | Ranking | el score de una vencida se multiplica por `OBS_RAG_STALE_PENALTY` (0,75 por defecto). Baja, no desaparece |
 | Filtro duro | sólo con `--fresh-only` (`fresh_only` en el plugin). Esconderlas por defecto devolvería "no encontrado", que es la misma mentira al revés |
 
@@ -160,8 +160,8 @@ Las reglas son a propósito chiquitas:
 obsn rag "certificados" --fresh-only     # sólo notas que siguen siendo ciertas
 obsn stale                               # qué venció y hace cuánto
 obsn stale --days 90 --json              # los peores, en JSON
-obsn status                              # suma vencidas / sin_fecha a la línea
-obsn meta 02-infra/dns.md                # "vigencia: VENCIDA hace 76 días"
+obsn status                              # suma stale / undated a la línea
+obsn meta 02-infra/dns.md                # "freshness: STALE, 76 days ago"
 ```
 
 El nombre del campo y su semántica son los de [OKF v0.2 §5.5](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md):
@@ -228,7 +228,7 @@ notas con 10.000 chunks quedan en ~70 MB, y no es una copia legible del vault.
 Los vectores se cachean por hash del texto y del modelo. Por eso `reindex --force` con la
 caché caliente tarda 7 s en vez de 198.
 
-`obsn status` reporta cuándo se construyó el índice (`indexado` en ISO, `antiguedad_min` en
+`obsn status` reporta cuándo se construyó el índice (`indexed_at` en ISO, `age_min` en
 minutos) y cuántas notas ve. Eso es lo que separa un índice fresco de uno de hace tres días
 cuando una búsqueda no encuentra algo que debería.
 
@@ -275,7 +275,7 @@ Se apaga con `OBS_RAG_NO_ASYNC=1`.
 ## Actualizar
 
 ```bash
-obsn upgrade --check   # 0 al día · 10 hay actualización · 1 error
+obsn upgrade --check   # 0 up to date · 10 update available · 1 error
 obsn upgrade           # fetch + fast-forward, reinstala si cambió pyproject.toml, reindexa
 obsn upgrade --how     # qué hace, paso a paso
 ```
@@ -292,7 +292,7 @@ sube la patch.
 
 ```bash
 obsn --version          # 0.2.0
-obsn upgrade --check    # 0 al día · 10 hay actualización · 1 error
+obsn upgrade --check    # 0 up to date · 10 update available · 1 error
 ```
 
 `--check` mira los commits nuevos y el último tag publicado, así que un commit suelto no

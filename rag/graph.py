@@ -1,23 +1,23 @@
 """
-obs-graph — auditoría del grafo de wikilinks del vault.
+obs-graph — audit of the vault's wikilink graph.
 
-POR QUÉ EXISTE
-──────────────
-Medido 2026-09-29 sobre 152 notas: 82% no linkean a nada, 76% son islas
-(ningún link entra ni sale), 120 componentes disconnected para 152 notas.
-El único grafo real era el 00-INDEX.md. El RAG recupera por similitud pero
-NO acumula relaciones: cada nota nueva es un archivo suelto.
+WHY IT EXISTS
+─────────────
+Measured 2026-09-29 over 152 notes: 82% link to nothing, 76% are islands
+(no link in or out), 120 disconnected components for 152 notes.
+The only real graph was 00-INDEX.md. The RAG retrieves by similarity but does
+NOT accumulate relationships: every new note is a loose file.
 
-Este script mide eso. Y `obsidian-link.py` propone los links que faltan usando
-los embeddings que ya están en el índice local.
+This script measures that. And `obsidian-link.py` proposes the missing links using
+the embeddings that are already in the local index.
 
-USO
-───
-  python3 obsidian-graph.py                 # reporte completo
-  python3 obsidian-graph.py --stats         # solo el resumen
-  python3 obsidian-graph.py --orphans       # lista de huérfanas
-  python3 obsidian-graph.py --clusters      # componentes conexas
-  python3 obsidian-graph.py --broken        # wikilinks que no resuelven
+USAGE
+─────
+  python3 obsidian-graph.py                 # full report
+  python3 obsidian-graph.py --stats         # summary only
+  python3 obsidian-graph.py --orphans       # list of orphans
+  python3 obsidian-graph.py --clusters      # connected components
+  python3 obsidian-graph.py --broken        # wikilinks that do not resolve
 """
 from __future__ import annotations
 
@@ -43,12 +43,12 @@ FALSE_POSITIVE = re.compile(
 
 
 def load_notes(db: str = DB) -> dict[str, str]:
-    """Leer las notas del vault. El índice ya no guarda el texto en claro."""
+    """Read the vault's notes. The index no longer stores the text in clear."""
     from .config import VAULT
     from .vault import notas_del_vault
 
     if not Path(VAULT).is_dir():
-        sys.exit(f"obs-graph: no existe el vault {VAULT}")
+        sys.exit(f"obs-graph: no vault at {VAULT}")
     # `notas_del_vault` es el único que camina el vault: filtra symlinks que apunten afuera.
     # Con `rglob` propio, un `nota.md -> ~/.ssh/id_ed25519` se leía y terminaba en el grafo.
     return notas_del_vault()
@@ -59,7 +59,7 @@ def basename(path: str) -> str:
 
 
 def build_graph(notes: dict[str, str]) -> dict:
-    """Aristas out/in, huérfanas, islas, componentes y links rotos."""
+    """Out/in edges, orphans, islands, components and broken links."""
     names = {p: basename(p) for p in notes}
     # índice inverso basename → path (si hay colisiones, gana la primera;
     # se reportan aparte porque un basename duplicado es un problema real)
@@ -87,7 +87,7 @@ def build_graph(notes: dict[str, str]) -> dict:
                 broken.append((path, target))
                 continue
             if len(cands) > 1:
-                ambiguous.append((path, f"{target} → {len(cands)} notas"))
+                ambiguous.append((path, f"{target} → {len(cands)} notes"))
             hit = cands[0]
             if hit != path:
                 out[path].add(hit)
@@ -126,7 +126,7 @@ def build_graph(notes: dict[str, str]) -> dict:
 def by_folder(notes: dict, out: dict) -> list[tuple[str, int, int]]:
     data: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     for p in notes:
-        d = os.path.dirname(p) or "(raíz)"
+        d = os.path.dirname(p) or "(root)"
         data[d][0] += 1
         if out[p]:
             data[d][1] += 1
@@ -137,31 +137,31 @@ def report(g: dict, show: str) -> None:
     notes, out, inb = g["notes"], g["out"], g["inb"]
     tot = len(notes)
     if tot == 0:
-        print("obs-graph: el índice está vacío")
+        print("obs-graph: the index is empty")
         return
     linked_out = tot - len(g["orphans"])
     linked_in = len([p for p in notes if inb[p]])
 
     if show == "stats":
-        print(f"notas={tot}  linkean={linked_out} ({100*linked_out//tot}%)  "
-              f"reciben={linked_in} ({100*linked_in//tot}%)  "
-              f"huérfanas={len(g['orphans'])}  islas={len(g['islands'])}  "
-              f"componentes={len(g['clusters'])}  aristas={g['edges']}  "
-              f"rotos={len(g['broken'])}")
+        print(f"notes={tot}  outgoing={linked_out} ({100*linked_out//tot}%)  "
+              f"incoming={linked_in} ({100*linked_in//tot}%)  "
+              f"orphans={len(g['orphans'])}  islands={len(g['islands'])}  "
+              f"components={len(g['clusters'])}  edges={g['edges']}  "
+              f"broken={len(g['broken'])}")
         return
 
     print("═" * 66)
-    print(f"GRAFO DE WIKILINKS — {tot} notas")
+    print(f"WIKILINK GRAPH — {tot} notes")
     print("═" * 66)
-    print(f"  con link saliente   : {linked_out:4d}  ({100*linked_out//tot:3d}%)")
-    print(f"  con link entrante   : {linked_in:4d}  ({100*linked_in//tot:3d}%)")
-    print(f"  huérfanas           : {len(g['orphans']):4d}  ({100*len(g['orphans'])//tot:3d}%)")
-    print(f"  islas               : {len(g['islands']):4d}  ({100*len(g['islands'])//tot:3d}%)")
-    print(f"  componentes         : {len(g['clusters']):4d}")
-    print(f"  aristas             : {g['edges']:4d}")
-    print(f"  links rotos         : {len(g['broken']):4d}")
+    print(f"  with outgoing links : {linked_out:4d}  ({100*linked_out//tot:3d}%)")
+    print(f"  with incoming links : {linked_in:4d}  ({100*linked_in//tot:3d}%)")
+    print(f"  orphans             : {len(g['orphans']):4d}  ({100*len(g['orphans'])//tot:3d}%)")
+    print(f"  islands             : {len(g['islands']):4d}  ({100*len(g['islands'])//tot:3d}%)")
+    print(f"  components          : {len(g['clusters']):4d}")
+    print(f"  edges               : {g['edges']:4d}")
+    print(f"  broken links        : {len(g['broken']):4d}")
 
-    print(f"\n─── DENSIDAD POR CARPETA {'─'*44}")
+    print(f"\n─── DENSITY BY FOLDER {'─'*44}")
     for d, (n, l) in by_folder(notes, out):
         pct = 100 * l // n
         bar = "█" * (pct // 5)
@@ -169,28 +169,28 @@ def report(g: dict, show: str) -> None:
         print(f"  {d:42s} {n:3d}  {pct:3d}%  {bar}{flag}")
 
     if show in ("orphans", "all"):
-        print(f"\n─── HUÉRFANAS (no linkean a nada) {'─'*34}")
+        print(f"\n─── ORPHANS (linking to nothing) {'─'*34}")
         for p in sorted(g["orphans"]):
             print(f"  {p}")
 
     if show in ("clusters", "all"):
-        print(f"\n─── COMPONENTES CONEXAS {'─'*42}")
+        print(f"\n─── CONNECTED COMPONENTS {'─'*42}")
         multi = [c for c in g["clusters"] if len(c) > 1]
-        print(f"  {len(g['clusters'])} componentes · {len(multi)} con >1 nota")
+        print(f"  {len(g['clusters'])} components · {len(multi)} with >1 note")
         for comp in g["clusters"][:15]:
             if len(comp) == 1:
-                print(f"      suelta  {comp[0]}")
+                print(f"      loose   {comp[0]}")
             else:
-                print(f"  CLUSTER({len(comp):3d})  {comp[0]}" + (f"  +{len(comp)-1} más" if len(comp) > 1 else ""))
+                print(f"  CLUSTER({len(comp):3d})  {comp[0]}" + (f"  +{len(comp)-1} more" if len(comp) > 1 else ""))
         if len(multi) > 15:
-            print(f"  … y {len(g['clusters'])-15} componentes más")
+            print(f"  … and {len(g['clusters'])-15} more components")
 
     if show in ("broken", "all") and g["broken"]:
-        print(f"\n─── LINKS ROTOS {'─'*50}")
+        print(f"\n─── BROKEN LINKS {'─'*50}")
         for p, t in g["broken"]:
             print(f"  {p}\n      → [[{t}]]")
     if g["ambiguous"]:
-        print(f"\n─── BASENAMES AMBIGUOS {'─'*45}")
+        print(f"\n─── AMBIGUOUS BASENAMES {'─'*45}")
         for p, t in g["ambiguous"]:
             print(f"  {p}  →  {t}")
 
@@ -198,8 +198,8 @@ def report(g: dict, show: str) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Auditoría del grafo de wikilinks del vault")
-    ap.add_argument("--stats", action="store_true", help="solo el resumen en una línea")
+    ap = argparse.ArgumentParser(description="Audit the vault's wikilink graph")
+    ap.add_argument("--stats", action="store_true", help="summary only, one line")
     ap.add_argument("--orphans", action="store_true")
     ap.add_argument("--clusters", action="store_true")
     ap.add_argument("--broken", action="store_true")

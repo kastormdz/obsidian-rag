@@ -94,7 +94,7 @@ def main():
 
     # --- status
     s = call("vault_status", {})
-    check("status: ok y 3 notas", s.get("ok") and s.get("notas") == 3, f"notas={s.get('notas')} obsn={s.get('obsn_version')}")
+    check("status: ok y 3 notas", s.get("ok") and s.get("notes") == 3, f"notes={s.get('notes')} obsn={s.get('obsn_version')}")
 
     # --- search híbrida (con un término que existe: en un vault de 3 notas una paráfrasis
     # sin ninguna palabra en común queda debajo del piso semántico, y eso es del motor, no
@@ -145,8 +145,8 @@ def main():
           str([x["path"] for x in sf.get("hits", [])]))
     st_v = call("vault_status", {})
     check("status cuenta vencidas y sin_fecha",
-          st_v.get("ok") and st_v.get("vencidas") == 1 and "sin_fecha" in st_v,
-          f"vencidas={st_v.get('vencidas')} sin_fecha={st_v.get('sin_fecha')}")
+          st_v.get("ok") and st_v.get("stale") == 1 and "undated" in st_v,
+          f"stale={st_v.get('stale')} undated={st_v.get('undated')}")
 
     # --- read
     rd = call("vault_read", {"path": "01-Infra/keycloak.md"})
@@ -207,7 +207,7 @@ def main():
     import time
     time.sleep(4)
     s2 = call("vault_status", {})
-    check("status refleja escritura y borrado", s2.get("notas") == 3, f"notas={s2.get('notas')} (esperado 3)")
+    check("status refleja escritura y borrado", s2.get("notes") == 3, f"notes={s2.get('notes')} (esperado 3)")
 
     shutil.rmtree(root, ignore_errors=True)
     failed = [r for r in RESULTS if not r[1]]

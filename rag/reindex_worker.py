@@ -1,24 +1,23 @@
-"""Reindexado en segundo plano: lo lanza el CLI después de escribir y se va solo.
+"""Background reindex: the CLI launches it after writing and it exits on its own.
 
-POR QUÉ EXISTE
-──────────────
-Escribir una nota y que el RAG no la vea hasta el próximo timer es un agujero: un
-agente escribe, busca en el mismo turno y no encuentra lo que acaba de crear. Pero
-reindexar en el camino crítico cuesta ~1,5 s (cargar el modelo para embeber), y eso
-sí se nota.
+WHY IT EXISTS
+─────────────
+Writing a note and having the RAG not see it until the next timer is a hole: an agent
+writes, searches in the same turn, and does not find what it just created. But reindexing
+on the critical path costs ~1.5 s (loading the model to embed), and that is noticeable.
 
-Solución: el CLI hace fork+exec de este worker y sigue. Acá se resuelven los dos
-problemas de hacerlo ingenuamente:
+Solution: the CLI forks+execs this worker and moves on. Two problems of doing it naively
+are solved here:
 
-- **Coalescencia**: si escribís cinco notas seguidas, no querés cinco reindexados
-  peleándose por el lock de SQLite. El worker toma un `flock` no bloqueante: si ya
-  hay otro trabajando, se retira sin hacer nada — el que está corriendo va a listar
-  el vault DESPUÉS del debounce, así que ve también esta escritura.
-- **Debounce**: duerme un instante antes de listar, para que aterricen las
-  escrituras de la ráfaga (un `edit` seguido de un `move`, por ejemplo).
+- **Coalescing**: if you write five notes in a row, you do not want five reindexes
+  fighting over the SQLite lock. The worker takes a non-blocking `flock`: if another one
+  is already working, it leaves without doing anything — the running one will list the
+  vault AFTER the debounce, so it sees this write too.
+- **Debounce**: it sleeps for a moment before listing, so the writes of the burst land
+  (an `edit` followed by a `move`, for example).
 
-Salida: código 0 siempre que el reindex haya corrido o se haya retirado por lock.
-El log vive en $XDG_STATE_HOME/obsidian-rag/reindex.log (o ~/.local/state/...).
+Output: exit code 0 whenever the reindex ran or stepped aside for the lock.
+The log lives in $XDG_STATE_HOME/obsidian-rag/reindex.log (or ~/.local/state/...).
 """
 from __future__ import annotations
 
@@ -70,7 +69,7 @@ def main() -> int:
                 try:
                     index.build()
                 except SystemExit as salida:      # build() sale con 1 si falta indexar algo
-                    print(f"  build terminó con código {salida.code}", file=log, flush=True)
+                    print(f"  build finished with code {salida.code}", file=log, flush=True)
                     return int(salida.code or 0)
             print("  ok", file=log, flush=True)
     return 0

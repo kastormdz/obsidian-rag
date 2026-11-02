@@ -1,34 +1,34 @@
 """
-obsidian-link — propone y aplica wikilinks entre notas usando el índice local.
+obsidian-link — proposes and applies wikilinks between notes using the local index.
 
-POR QUÉ EXISTE
-──────────────
-Medido 2026-09-29: 152 notas, 82% sin link saliente, 76% islas, 120 componentes
-para 152 notas. El RAG recupera por similitud pero NO acumula relaciones: cada
-nota nueva es un archivo suelto y nadie vuelve a linkearla.
+WHY IT EXISTS
+─────────────
+Measured 2026-09-29: 152 notes, 82% with no outgoing link, 76% islands, 120 components
+for 152 notes. The RAG retrieves by similarity but does NOT accumulate relationships:
+every new note is a loose file and nobody links it again.
 
-Este script invierte eso: usa los embeddings que YA están en obsidian-index.db
-para calcular, nota por nota, cuáles son sus vecinas reales. No inventa
-relaciones — la propuesta sale de los mismos scores que usa el RAG.
+This script inverts that: it uses the embeddings already in obsidian-index.db to work
+out, note by note, which are its real neighbors. It does not invent relationships —
+the proposal comes from the same scores the RAG uses.
 
-DISEÑO
+DESIGN
 ──────
-- Solo propone links cuando la relación es FUERTE (score alto) y la nota no
-  está ya enlazada a la otra. Un grafo de 300 links weak es ruido; el valor
-  está en 30 links que alguien mire y piense "sí, tiene sentido".
-- Distingue "vecina" (tema compartido) de "corrección" (la otra nota es más
-  canónica sobre el mismo sujeto) — esa segunda categoría es la que más sirve.
-- NUNCA toca `Secrets/` ni `06-Todo/`: son credenciales y pendientes.
-- Propone primero, aplica después. Nunca escribe sin `--apply` explícito.
+- It only proposes links when the relationship is STRONG (high score) and the note is
+  not already linked to the other one. A graph of 300 weak links is noise; the value
+  is in 30 links someone reads and thinks "yes, that makes sense".
+- It distinguishes "neighbor" (shared topic) from "correction" (the other note is more
+  canonical about the same subject) — the second category is the most useful.
+- It NEVER touches `Secrets/` or `06-Todo/`: those are credentials and to-dos.
+- Propose first, apply later. It never writes without an explicit `--apply`.
 
-USO
-───
-  python3 obsidian-link.py                       # reporte general
-  python3 obsidian-link.py --neighbors keycloak  # vecinas de un tema
-  python3 obsidian-link.py --propose              # links sugeridos, no toca nada
-  python3 obsidian-link.py --apply                # escribe los links en el vault
-  python3 obsidian-link.py --apply --max 30       # hasta 30 (default 50)
-  python3 obsidian-link.py --canonico             # detecta duplicados de sujeto
+USAGE
+─────
+  python3 obsidian-link.py                       # general report
+  python3 obsidian-link.py --neighbors keycloak  # neighbors of a topic
+  python3 obsidian-link.py --propose             # suggested links, touches nothing
+  python3 obsidian-link.py --apply               # writes the links into the vault
+  python3 obsidian-link.py --apply --max 30      # up to 30 (default 50)
+  python3 obsidian-link.py --canonical           # detects duplicate subjects
 """
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ WIKILINK = re.compile(r"\[\[([^\]|#]+)")
 
 
 def cargando_indice():
-    """El motor del índice, como módulo del paquete (carga el modelo una vez)."""
+    """The index engine, as a module of the package (loads the model once)."""
     from . import index as motor
 
     return motor
@@ -68,7 +68,7 @@ def notas_filtradas() -> list[str]:
 
 
 def vec_por_nota() -> dict[str, "object"]:
-    """Vector medio de cada nota (promedio de sus chunks), normalizado."""
+    """Mean vector per note (average of its chunks), normalized."""
     import numpy as np
     import sqlite3
     c = sqlite3.connect(DB)
@@ -86,7 +86,7 @@ def vec_por_nota() -> dict[str, "object"]:
 
 
 def enlaces_actuales() -> dict[str, set[str]]:
-    """Wikilinks que ya existen, leídos del vault (el índice no guarda el texto)."""
+    """Wikilinks that already exist, read from the vault (the index stores no text)."""
     from .vault import notas_del_vault
 
     # Mismo camino que el grafo: confina los symlinks que apuntan afuera del vault.
@@ -107,7 +107,7 @@ def enlaces_actuales() -> dict[str, set[str]]:
 
 
 def _dueno(p: str, q: str, cur: dict) -> str:
-    """De un par, qué nota "posee" el link: la más canónica, desempatando por nombre."""
+    """From a pair, which note "owns" the link: the most canonical one, breaking ties by name."""
     cp, cq = score_de_canonicidad(p, cur), score_de_canonicidad(q, cur)
     if cp != cq:
         return p if cp > cq else q
@@ -117,10 +117,10 @@ def _dueno(p: str, q: str, cur: dict) -> str:
 
 
 def vecinos(vecs: dict, cur: dict, min_score: float, top_k: int) -> dict[str, list]:
-    """Para cada nota, sus vecinas no enlazadas con score >= min_score.
+    """For each note, its unlinked neighbors with score >= min_score.
 
-    Deduplicación recíproca: si A propone B y B propone A, es UN link, no dos. Gana la
-    dirección de la nota más canónica.
+    Reciprocal dedup: if A proposes B and B proposes A, it is ONE link, not two. The
+    direction of the more canonical note wins.
     """
     import numpy as np
     paths = list(vecs)
@@ -166,11 +166,11 @@ def vecinos(vecs: dict, cur: dict, min_score: float, top_k: int) -> dict[str, li
 
 
 def detecta_canonicos(vecs: dict, cur: dict, umbral: float) -> list[tuple]:
-    """Pares casi duplicados: mismo sujeto, dos notas. El más canónico gana.
+    """Almost-duplicate pairs: same subject, two notes. The most canonical one wins.
 
-    Heurística de canonicidad: la nota cuyo nombre es más corto y específico
-    (menos sufijos tipo '-investigacion', '-setup', '-informe') y que tiene más
-    enlaces entrantes. No es infalible — por eso SOLO propone, no mueve nada.
+    Canonicity heuristic: the note whose name is shorter and more specific
+    (fewer suffixes like '-research', '-setup', '-report') and that has more
+    incoming links. It is not infallible — that is why it ONLY proposes, moves nothing.
     """
     import numpy as np
     paths = list(vecs)
@@ -191,7 +191,7 @@ def detecta_canonicos(vecs: dict, cur: dict, umbral: float) -> list[tuple]:
 
 
 def score_de_canonicidad(p: str, cur: dict) -> float:
-    """Más alto = más probable que sea la nota canónica del tema."""
+    """Higher = more likely to be the canonical note for the subject."""
     base = os.path.splitext(os.path.basename(p))[0]
     # ENTRANTES de verdad: `cur[p]` son los links que p EMITE. Contarlos como entrantes
     # hacía que la nota más enlazada del vault pareciera la menos canónica.
@@ -205,19 +205,19 @@ def score_de_canonicidad(p: str, cur: dict) -> float:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Propone y aplica wikilinks por similitud (RAG)")
-    ap.add_argument("--neighbors", metavar="TEMA", help="vecinas de un tema")
-    ap.add_argument("--propose", action="store_true", help="solo muestra, no escribe")
-    ap.add_argument("--apply", action="store_true", help="ESCRIBE los links en el vault")
+    ap = argparse.ArgumentParser(description="Propose and apply wikilinks by similarity (RAG)")
+    ap.add_argument("--neighbors", metavar="TOPIC", help="neighbors of a topic")
+    ap.add_argument("--propose", action="store_true", help="show only, do not write")
+    ap.add_argument("--apply", action="store_true", help="WRITE the links into the vault")
     ap.add_argument("--min-score", type=float, default=0.78,
-                    help="similitud mínima para proponer (default 0.78)")
-    ap.add_argument("--max", type=int, default=50, help="máximo de notas a tocar")
-    ap.add_argument("--canonico", action="store_true", help="detecta duplicados de sujeto")
-    ap.add_argument("--umbral-canonico", type=float, default=0.80)
+                    help="minimum similarity to propose (default 0.78)")
+    ap.add_argument("--max", type=int, default=50, help="maximum notes to touch")
+    ap.add_argument("--canonical", action="store_true", help="detect duplicate subjects")
+    ap.add_argument("--canonical-threshold", type=float, default=0.80)
     a = ap.parse_args()
 
     if not os.path.exists(DB):
-        sys.exit("obsidian-link: no hay índice. Corré: obsn reindex")
+        sys.exit("obsidian-link: no index. Run: obsn reindex")
     oi = cargando_indice()
     notas = set(notas_filtradas())
     vecs_all = vec_por_nota()
@@ -225,36 +225,36 @@ def main() -> None:
     cur = enlaces_actuales()
     cur = {p: {q for q in s if q in vecs} for p, s in cur.items()}
 
-    # ── modo: vecinas de un tema ──
+    # ── mode: neighbors of a topic ──
     if a.neighbors:
         q = oi.search(a.neighbors, 8)
-        print(f"\n─── VECINAS DE {a.neighbors!r} (búsqueda RAG) ───")
+        print(f"\n─── NEIGHBORS OF {a.neighbors!r} (RAG search) ───")
         for h in q:
             print(f"  {h['score']:.3f}  {h['path']}"
-                  f"{'   [ya enlazada]' if h['path'] in cur.get('00-INDEX.md', ()) else ''}")
+                  f"{'   [already linked]' if h['path'] in cur.get('00-INDEX.md', ()) else ''}")
         return
 
-    # ── modo: canónicos (duplicados) ──
-    if a.canonico:
-        pares = [(s, p, q) for s, p, q in detecta_canonicos(vecs, cur, a.umbral_canonico)
+    # ── mode: canonical notes (duplicates) ──
+    if a.canonical:
+        pares = [(s, p, q) for s, p, q in detecta_canonicos(vecs, cur, a.canonical_threshold)
                  if p in vecs and q in vecs]
-        print(f"\n─── POSIBLES DUPLICADOS (similitud >= {a.umbral_canonico}) ───")
-        print(f"  {len(pares)} pares. Propone canónico, NO mueve nada.\n")
+        print(f"\n─── POSSIBLE DUPLICATES (similarity >= {a.canonical_threshold}) ───")
+        print(f"  {len(pares)} pairs. Proposes the canonical one, moves NOTHING.\n")
         for s, p, q in pares[:30]:
             cp, cq = score_de_canonicidad(p, cur), score_de_canonicidad(q, cur)
             canon = p if cp >= cq else q
             otro = q if canon == p else p
-            print(f"  {s:.3f}  canónico: {canon}")
-            print(f"          duplicado: {otro}")
+            print(f"  {s:.3f}  canonical: {canon}")
+            print(f"          duplicate: {otro}")
         return
 
-    # ── modo: propuesta / aplicación ──
+    # ── mode: propose / apply ──
     vec = vecinos(vecs, cur, a.min_score, top_k=4)
     total_links = sum(len(v) for v in vec.values())
-    print(f"\n─── PROPUESTA DE LINKS (similitud >= {a.min_score}) ───")
-    print(f"  {len(vec)} notas ganarían links · {total_links} links sugeridos\n")
+    print(f"\n─── LINK PROPOSALS (similarity >= {a.min_score}) ───")
+    print(f"  {len(vec)} notes would gain links · {total_links} suggested links\n")
     if not vec:
-        print("  (nada que proponer con ese umbral — probá --min-score 0.55)")
+        print("  (nothing to propose at that threshold — try --min-score 0.55)")
         return
 
     ranking = sorted(vec.items(), key=lambda x: -x[1][0][0])
@@ -263,14 +263,14 @@ def main() -> None:
         for s, q in cands:
             print(f"      ← {q}   ({s:.3f})")
     if len(ranking) > 25:
-        print(f"  … y {len(ranking)-25} notas más")
+        print(f"  … and {len(ranking)-25} more notes")
 
     if not a.apply:
-        print("\n  (espejo nada. Usá --apply para escribir)")
+        print("\n  (mirror only. Use --apply to write)")
         return
 
-    # ── aplicar ── va directo al filesystem, con las mismas garantías que el resto:
-    # path confinado y escritura atómica.
+    # ── apply ── goes straight to the filesystem, with the same guarantees as the rest:
+    # confined path and atomic write.
     from .vault import edit_note, read_note
 
     tocadas = 0
@@ -280,30 +280,32 @@ def main() -> None:
         try:
             body = read_note(p)
         except Exception as e:
-            print(f"  ! no pude leer {p}: {e}")
+            print(f"  ! could not read {p}: {e}")
             continue
-        # Si ya tiene la sección, agregarla otra vez la duplica: hay que saltear la nota,
-        # no seguir de largo.
+        # If it already has the section, adding it again duplicates it: skip the note,
+        # do not keep going.
         if not isinstance(body, str):
-            print(f"  ! respuesta inesperada en {p}")
+            print(f"  ! unexpected response in {p}")
             continue
-        if "Notas relacionadas" in body:
+        # "Notas relacionadas" is the heading older runs wrote: both markers are checked so
+        # existing notes do not get a second section in the new language.
+        if "Related notes" in body or "Notas relacionadas" in body:
             continue
         nuevos = [q for _, q in cands
                   if f"[[{os.path.splitext(os.path.basename(q))[0]}]]" not in body
                   and f"[[{q}]]" not in body]
         if not nuevos:
             continue
-        # wikilinks por basename (como funcionan en Obsidian)
-        line = "\n\n## 🔗 Notas relacionadas\n\n" + "\n".join(
+        # wikilinks by basename (how Obsidian resolves them)
+        line = "\n\n## 🔗 Related notes\n\n" + "\n".join(
             f"- [[{os.path.splitext(os.path.basename(q))[0]}]]" for q in nuevos)
         try:
             edit_note(p, "append", line)
             print(f"  ✓ {p}  ←  {len(nuevos)} links")
             tocadas += 1
         except Exception as e:
-            print(f"  ! falló {p}: {e}")
-    print(f"\n  {tocadas} notas actualizadas. Reindexá con: obsn reindex")
+            print(f"  ! failed {p}: {e}")
+    print(f"\n  {tocadas} notes updated. Reindex with: obsn reindex")
 
 
 if __name__ == "__main__":

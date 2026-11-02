@@ -1,14 +1,14 @@
-"""upgrade — actualizar obsn desde su repo git y dejar el índice consistente.
+"""upgrade — update obsn from its git repo and leave the index consistent.
 
-Por qué existe: el paquete se instala en modo editable, así que "actualizar" es
-traer commits, reinstalar sólo si cambiaron las dependencias y reindexar si cambió
-el criterio de troceado o el modelo. Hacerlo a mano es fácil de olvidar a medias
-(se tira `git pull` y nadie reindexa).
+Why it exists: the package is installed in editable mode, so "updating" means
+fetching commits, reinstalling only if the dependencies changed, and reindexing if the
+chunking criteria or the model changed. Doing it by hand is easy to forget halfway
+(someone runs `git pull` and nobody reindexes).
 
-Salidas:
-    obsn upgrade --check    # 0 = al día, 10 = hay actualización, 1 = error
-    obsn upgrade            # trae los commits, reinstala si hace falta y reindexa
-    obsn upgrade --how      # explica el procedimiento
+Outputs:
+    obsn upgrade --check    # 0 = up to date, 10 = update available, 1 = error
+    obsn upgrade            # fetches the commits, reinstalls if needed and reindexes
+    obsn upgrade --how      # explains the procedure
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def version_instalada() -> str:
 
 
 def repo_dir() -> Path | None:
-    """Directorio del repo cuando la instalación es editable (el paquete vive en él)."""
+    """Repo directory when the install is editable (the package lives in it)."""
     try:
         import rag
     except ImportError:
@@ -64,7 +64,7 @@ def _ver(texto: str) -> tuple[int, int, int]:
 
 
 def ultima_version(repo: Path) -> str | None:
-    """Versión más alta publicada como tag que alcanza origin/main, sin la `v`."""
+    """Highest version published as a tag that origin/main reaches, without the `v`."""
     salida = _git(["tag", "--list", "v*", "--merged", "origin/main", "--sort=-v:refname"], repo)
     if salida.returncode != 0:
         return None
@@ -76,12 +76,12 @@ def ultima_version(repo: Path) -> str | None:
 
 
 def estado(repo: Path, fetch: bool = True) -> dict[str, Any]:
-    """Estado del repo frente a su remoto. No modifica nada."""
+    """Repo state against its remote. Modifies nothing."""
     datos: dict[str, Any] = {"repo": str(repo), "version": version_instalada()}
 
     rama = _git(["rev-parse", "--abbrev-ref", "HEAD"], repo)
     if rama.returncode != 0:
-        raise RuntimeError(f"no pude leer la rama: {rama.stderr.strip()}")
+        raise RuntimeError(f"could not read the branch: {rama.stderr.strip()}")
     datos["rama"] = rama.stdout.strip()
     datos["head"] = _git(["rev-parse", "--short", "HEAD"], repo).stdout.strip()
     datos["sucio"] = bool(_git(["status", "--porcelain"], repo).stdout.strip())
@@ -94,7 +94,7 @@ def estado(repo: Path, fetch: bool = True) -> dict[str, Any]:
     if fetch:
         traido = _git(["fetch", "--quiet", "--prune", "--tags", "origin"], repo)
         if traido.returncode != 0:
-            raise RuntimeError(f"git fetch falló: {traido.stderr.strip()[:300]}")
+            raise RuntimeError(f"git fetch failed: {traido.stderr.strip()[:300]}")
 
     # Los tags cuentan: un commit sin tag no es una versión publicada.
     datos["ultima_version"] = ultima_version(repo)
@@ -123,15 +123,15 @@ def _reinstalar_si_cambio_pyproject(repo: Path, previo: str, nuevo: str) -> bool
     cambio = _git(["diff", "--name-only", previo, nuevo], repo).stdout
     if "pyproject.toml" not in cambio:
         return False
-    print("[upgrade] cambió pyproject.toml: reinstalando en este intérprete", flush=True)
+    print("[upgrade] pyproject.toml changed: reinstalling in this interpreter", flush=True)
     pip = subprocess.run(
         [sys.executable, "-m", "pip", "install", "-e", ".", "--quiet"],
         cwd=repo, capture_output=True, text=True, timeout=600,
     )
     if pip.returncode != 0:
-        print(f"[upgrade] pip falló:\n{pip.stderr[-800:]}", file=sys.stderr)
+        print(f"[upgrade] pip failed:\n{pip.stderr[-800:]}", file=sys.stderr)
         return False
-    print("[upgrade] reinstalado", flush=True)
+    print("[upgrade] reinstalled", flush=True)
     return True
 
 
@@ -139,27 +139,27 @@ def main(check: bool = False, how: bool = False, reindexar: bool = True,
          repo: Path | None = None) -> int:
     if how:
         print(
-            "obsn upgrade actualiza el paquete desde su repo git y deja el índice consistente.\n\n"
-            "1. Verifica que la instalación sea editable: si `rag` vive en site-packages y no\n"
-            "   en un repo con .git, no hay nada que actualizar por acá (usá pip).\n"
-            "2. Se niega a seguir si hay cambios locales sin commitear: un fast-forward con el\n"
-            "   árbol sucio puede pisar trabajo.\n"
-            "3. `git fetch` + fast-forward al remoto (nunca crea un merge commit).\n"
-            "4. Si cambió pyproject.toml, reinstala en el intérprete que corre obsn.\n"
-            "5. Reindexa: incremental si no cambió nada estructural; si cambió el chunker o el\n"
-            "   modelo, el índice se reconstruye solo (lo decide meta.chunker/meta.modelo).\n\n"
-            "`--check` mira dos cosas: los commits nuevos en el remoto y el último tag de\n"
-            "versión (vX.Y.Z) que alcanza origin/main. Un commit sin tag no cuenta como\n"
-            "versión publicada.\n\n"
-            "Códigos de salida de --check: 0 = al día, 10 = hay actualización, 1 = error."
+            "obsn upgrade updates the package from its git repo and leaves the index consistent.\n\n"
+            "1. It checks that the install is editable: if `rag` lives in site-packages and not\n"
+            "   in a repo with .git, there is nothing to update from here (use pip).\n"
+            "2. It refuses to continue with uncommitted local changes: a fast-forward with a\n"
+            "   dirty tree can overwrite work.\n"
+            "3. `git fetch` + fast-forward to the remote (never creates a merge commit).\n"
+            "4. If pyproject.toml changed, it reinstalls in the interpreter running obsn.\n"
+            "5. It reindexes: incremental when nothing structural changed; if the chunker or the\n"
+            "   model changed, the index rebuilds itself (meta.chunker/meta.modelo decide).\n\n"
+            "`--check` looks at two things: new commits on the remote and the latest version tag\n"
+            "(vX.Y.Z) that origin/main reaches. A commit without a tag does not count as a\n"
+            "published version.\n\n"
+            "Exit codes for --check: 0 = up to date, 10 = update available, 1 = error."
         )
         return 0
 
     repo = repo or repo_dir()
     if repo is None:
         print(
-            "esta instalación no es editable (no hay .git junto al paquete).\n"
-            "Actualizá con: pip install -U git+https://github.com/kastormdz/obsidian-rag.git",
+            "this install is not editable (no .git next to the package).\n"
+            "Update with: pip install -U git+https://github.com/kastormdz/obsidian-rag.git",
             file=sys.stderr,
         )
         return EXIT_ERROR
@@ -167,33 +167,33 @@ def main(check: bool = False, how: bool = False, reindexar: bool = True,
     try:
         est = estado(repo, fetch=True)
     except (RuntimeError, subprocess.TimeoutExpired, OSError) as exc:
-        print(f"[upgrade] no pude consultar el remoto: {exc}", file=sys.stderr)
+        print(f"[upgrade] could not query the remote: {exc}", file=sys.stderr)
         return EXIT_ERROR
 
-    marca = f"{est['rama']} @ {est['head']}  ·  versión {est['version']}"
+    marca = f"{est['rama']} @ {est['head']}  ·  version {est['version']}"
     publicada = est.get("ultima_version")
-    cola = f" · última publicada {publicada}" if publicada else " · sin versiones publicadas"
+    cola = f" · latest published {publicada}" if publicada else " · no published versions"
     hay_version = bool(publicada) and _ver(str(publicada)) > _ver(est["version"])
     if check:
         if est["atras"] == 0 and not hay_version:
-            print(f"al día: {marca}{cola}")
+            print(f"up to date: {marca}{cola}")
             return EXIT_AL_DIA
         motivos = []
         if hay_version:
-            motivos.append(f"hay versión {publicada}")
+            motivos.append(f"version {publicada} available")
         if est["atras"]:
-            motivos.append(f"{est['atras']} commit{'s' if est['atras'] != 1 else ''} nuevos")
-        print(f"hay actualización: {marca}{cola} -> {', '.join(motivos)}")
+            motivos.append(f"{est['atras']} new commit{'s' if est['atras'] != 1 else ''}")
+        print(f"update available: {marca}{cola} -> {', '.join(motivos)}")
         for linea in _commit_log(repo, est["head"], est["upstream"]):
             print(f"  {linea}")
         return EXIT_HAY_UPDATE
 
     if est["atras"] == 0:
-        print(f"[upgrade] nada que hacer: {marca}")
+        print(f"[upgrade] nothing to do: {marca}")
         return EXIT_AL_DIA
 
     if est["sucio"]:
-        print("[upgrade] hay cambios locales sin commitear; no toco nada:", file=sys.stderr)
+        print("[upgrade] uncommitted local changes; not touching anything:", file=sys.stderr)
         for archivo in est["archivos_sucios"][:10]:
             print(f"  {archivo}", file=sys.stderr)
         return EXIT_ERROR
@@ -202,8 +202,8 @@ def main(check: bool = False, how: bool = False, reindexar: bool = True,
     print(f"[upgrade] {est['rama']}: {previo} -> {nuevo} ({est['atras']} commits)")
     ff = _git(["merge", "--ff-only", est["upstream"]], repo)
     if ff.returncode != 0:
-        # Pasa si hay commits locales sin pushear: ff-only no puede y no inventamos merges.
-        print(f"[upgrade] no se pudo avanzar (¿commits locales sin pushear?):\n{ff.stderr.strip()}",
+        # Happens with unpushed local commits: ff-only cannot and we do not invent merges.
+        print(f"[upgrade] could not fast-forward (unpushed local commits?):\n{ff.stderr.strip()}",
               file=sys.stderr)
         return EXIT_ERROR
     for linea in _commit_log(repo, previo, nuevo):
@@ -211,13 +211,13 @@ def main(check: bool = False, how: bool = False, reindexar: bool = True,
 
     _reinstalar_si_cambio_pyproject(repo, previo, nuevo)
 
-    # Reimportar por si el upgrade cambió el motor: el proceso ya tiene el módulo viejo.
+    # Reimport in case the upgrade changed the engine: this process still holds the old module.
     if reindexar:
-        print("[upgrade] reindexando (incremental; rebuild solo si cambió el motor)", flush=True)
+        print("[upgrade] reindexing (incremental; full rebuild only if the engine changed)", flush=True)
         import importlib
 
         from . import index
         importlib.reload(index)
         index.build(force=False)
-    print(f"[upgrade] listo: {est['rama']} @ {_git(['rev-parse', '--short', 'HEAD'], repo).stdout.strip()}")
+    print(f"[upgrade] done: {est['rama']} @ {_git(['rev-parse', '--short', 'HEAD'], repo).stdout.strip()}")
     return EXIT_AL_DIA

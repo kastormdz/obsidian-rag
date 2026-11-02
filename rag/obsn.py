@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""obsn — un solo comando para leer, escribir y buscar en un vault de Obsidian.
+"""obsn — one command to read, write and search an Obsidian vault.
 
-Los nombres largos son los del estándar MCP (`read_note`, `write_note`, …) y los cortos
-son alias, para que la misma herramienta sirva desde un agente y desde una terminal.
+The long names are the MCP standard ones (`read_note`, `write_note`, …) and the short ones
+are aliases, so the same tool works from an agent and from a terminal.
 
-    obsn rag "consulta"          búsqueda semántica (necesita el índice)
-    obsn search "texto"          búsqueda léxica por contenido (sin modelo)
-    obsn reindex [--force]       construir/actualizar el índice
-    obsn status                  estado del índice
-    obsn upgrade [--check]       actualizar el paquete desde su repo git
+    obsn rag "query"             semantic search (needs the index)
+    obsn search "text"           lexical search by content (no model)
+    obsn reindex [--force]       build/update the index
+    obsn status                  index state
+    obsn upgrade [--check]       update the package from its git repo
 
-    obsn read  <path>            leer una nota
-    obsn write <path>            crear/sobreescribir (contenido por stdin o --file)
+    obsn read  <path>            read a note
+    obsn write <path>            create/overwrite (content via stdin or --file)
     obsn edit  <path> <op>       append | prepend | replace
-    obsn delete <path>           a la papelera (--hard para borrar de verdad)
-    obsn move  <from> <to>       mover o renombrar
-    obsn list  [carpeta]         listar notas
-    obsn folders                 carpetas con cantidad de notas
-    obsn tags                    tags del vault
+    obsn delete <path>           to the trash (--hard to delete for real)
+    obsn move  <src> <dst>       move or rename
+    obsn list  [folder]          list notes
+    obsn folders                 folders with note counts
+    obsn tags                    vault tags
     obsn meta  <path>            frontmatter, tags, backlinks
 
-Variables de entorno: OBS_RAG_VAULT, OBS_RAG_INDEX, OBS_RAG_CACHE, OBS_RAG_MODEL.
+Environment variables: OBS_RAG_VAULT, OBS_RAG_INDEX, OBS_RAG_CACHE, OBS_RAG_MODEL.
 """
 
 from __future__ import annotations
@@ -37,12 +37,12 @@ from . import vault
 
 
 def _encolar_reindex() -> None:
-    """Dispara un reindexado en segundo plano y sigue.
+    """Fire a background reindex and move on.
 
-    fork+exec de un worker que hace debounce y coalescencia (ver rag/reindex_worker.py):
-    el usuario no paga los ~1,5 s de cargar el modelo. Se apaga con `--no-reindex` o
-    con `OBS_RAG_NO_ASYNC=1` (scripts que escriben en lote y reindexan una sola vez).
-    Si no se puede lanzar, no es un error: el timer lo agarra igual.
+    fork+exec of a worker that debounces and coalesces (see rag/reindex_worker.py): the
+    user does not pay the ~1.5 s of loading the model. Turn it off with `--no-reindex` or
+    with `OBS_RAG_NO_ASYNC=1` (scripts that write in bulk and reindex once).
+    If it cannot be launched, it is not an error: the timer picks it up anyway.
     """
     if os.environ.get("OBS_RAG_NO_ASYNC"):
         return
@@ -52,14 +52,14 @@ def _encolar_reindex() -> None:
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            start_new_session=True,       # que no lo mate el Ctrl-C de la terminal
+            start_new_session=True,       # so the terminal's Ctrl-C does not kill it
             close_fds=True,
         )
     except OSError:
         pass
 
 
-# --------------------------------------------------------------------- formato
+# --------------------------------------------------------------------- output
 
 
 def _json(datos: Any) -> None:
@@ -74,19 +74,19 @@ def _pedir_contenido(args: argparse.Namespace) -> str:
         return args.content
     if not sys.stdin.isatty():
         return sys.stdin.read()
-    raise SystemExit("falta el contenido: usá --file <ruta> o pasalo por stdin")
+    raise SystemExit("missing content: use --file <path> or pipe it through stdin")
 
 
 def _confirmar(pregunta: str, opciones: argparse.Namespace) -> bool:
     if getattr(opciones, "yes", False):
         return True
     if not sys.stdin.isatty():
-        raise SystemExit(f"{pregunta}\nNo hay terminal para confirmar: repetí con --yes.")
-    respuesta = input(f"{pregunta} [s/N] ").strip().lower()
-    return respuesta in {"s", "si", "sí", "y", "yes"}
+        raise SystemExit(f"{pregunta}\nNo terminal to confirm: repeat with --yes.")
+    respuesta = input(f"{pregunta} [y/N] ").strip().lower()
+    return respuesta in {"y", "yes", "s", "si", "sí"}
 
 
-# --------------------------------------------------------------------- comandos
+# --------------------------------------------------------------------- commands
 
 
 def cmd_rag(args: argparse.Namespace) -> None:
@@ -97,18 +97,18 @@ def cmd_rag(args: argparse.Namespace) -> None:
         _json(resultados)
         return
     if not resultados:
-        print("(sin resultados: probá otras palabras o corré `obsn reindex`)")
+        print("(no results: try other words or run `obsn reindex`)")
         return
     for i, r in enumerate(resultados, 1):
         marca = ""
-        if r.get("vencida"):
+        if r.get("stale"):
             dias = ""
             try:
                 from datetime import datetime, timezone
-                dias = f", hace {(datetime.now(timezone.utc) - datetime.fromisoformat(r['stale_after'])).days} días"
+                dias = f", {((datetime.now(timezone.utc) - datetime.fromisoformat(r['stale_after'])).days)} days ago"
             except (TypeError, ValueError):
                 pass
-            marca = f"  [VENCIDA{dias}]"
+            marca = f"  [STALE{dias}]"
         print(f"{i}. {r['path']}  ·  {r.get('heading', '')}  ·  "
               f"score {r.get('score', 0):.3f}{marca}")
 
@@ -121,7 +121,7 @@ def cmd_search(args: argparse.Namespace) -> None:
         _json(resultados)
         return
     if not resultados:
-        print("(sin resultados)")
+        print("(no results)")
         return
     for r in resultados:
         marca = " [path]" if r["path_hit"] else ""
@@ -150,18 +150,18 @@ def cmd_status(args: argparse.Namespace) -> None:
     from . import config
 
     if not config.DB.exists():
-        raise SystemExit(f"no hay índice en {config.DB}: corré `obsn reindex`")
+        raise SystemExit(f"no index at {config.DB}: run `obsn reindex`")
     with contextlib.closing(sqlite3.connect(config.DB)) as c:
-        # `notes` es la fuente de verdad de lo indexado. Contar paths distintos en
-        # `chunks` subcuenta: una nota sin cuerpo (solo frontmatter, o <20 chars) no
-        # genera chunks y desaparecía del total (medido: 193 vs 196 reales).
+        # `notes` is the source of truth for what is indexed. Counting distinct paths in
+        # `chunks` undercounts: a note with no body (frontmatter only, or <20 chars) produces
+        # no chunks and vanished from the total (measured: 193 vs 196 real).
         try:
             notas = c.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
         except sqlite3.OperationalError as exc:
-            # Índice de un formato anterior (sin tabla `notes`) o archivo que no es una DB:
-            # sin esto el usuario ve un traceback de sqlite en vez de qué hacer.
+            # Index from an older format (no `notes` table) or a file that is not a DB:
+            # without this the user sees an sqlite traceback instead of what to do.
             raise SystemExit(
-                f"índice incompleto en {config.DB} ({exc}): corré `obsn reindex --force`"
+                f"incomplete index at {config.DB} ({exc}): run `obsn reindex --force`"
             ) from None
         chunks = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
         con_vec = c.execute("SELECT COUNT(*) FROM chunks WHERE vec IS NOT NULL").fetchone()[0]
@@ -170,12 +170,12 @@ def cmd_status(args: argparse.Namespace) -> None:
         ).fetchone()[0]
         try:
             vigencias = [r[0] for r in c.execute("SELECT stale_after FROM notes")]
-        except sqlite3.OperationalError:      # índice anterior a la vigencia
+        except sqlite3.OperationalError:      # index from before freshness existed
             vigencias = []
-        # Cuándo se indexó y en qué estado quedó: los datos ya estaban en `meta`, pero no se
-        # exponían, así que un agente no podía distinguir un índice fresco de uno viejo, ni
-        # un build fallido de uno que nunca corrió. La tabla es `meta(k, v)`: con nombres
-        # inventados el SELECT tira OperationalError y el `except` lo vuelve "sin dato".
+        # When it was indexed and what state it ended in: the data was already in `meta`, but
+        # was not exposed, so an agent could not tell a fresh index from a stale one, nor a
+        # failed build from one that never ran. The table is `meta(k, v)`: with invented names
+        # the SELECT raises OperationalError and the `except` turns it into "no data".
         try:
             filas = dict(c.execute("SELECT k, v FROM meta WHERE k IN ('indexado', 'estado')"))
         except sqlite3.OperationalError:
@@ -189,9 +189,9 @@ def cmd_status(args: argparse.Namespace) -> None:
         if sello:
             indexado = datetime.fromtimestamp(sello).astimezone().isoformat(timespec="seconds")
             antiguedad = max(0, int((time.time() - sello) / 60))
-    estado = filas.get("estado") or "desconocido"
-    # La vigencia se cuenta en Python: las fechas están en ISO UTC y comparar strings
-    # con offsets distintos daría un orden falso.
+    estado = filas.get("estado") or "unknown"
+    # Freshness is counted in Python: the dates are ISO UTC and comparing strings with
+    # different offsets would give a false order.
     vencidas = sin_fecha = por_vencer = 0
     ahora = datetime.now(timezone.utc)
     for iso in vigencias:
@@ -208,37 +208,37 @@ def cmd_status(args: argparse.Namespace) -> None:
         elif (vence - ahora).days < 7:
             por_vencer += 1
     datos = {
-        "indice": str(config.DB),
+        "index": str(config.DB),
         "vault": str(config.VAULT),
-        "notas": notas,
+        "notes": notas,
         "chunks": chunks,
-        "con_embedding": con_vec,
-        "sin_chunks": sin_chunks,
-        "vencidas": vencidas,
-        "sin_fecha": sin_fecha,
-        "por_vencer_7d": por_vencer,
-        "modelo": config.MODELO,
-        "indexado": indexado,
-        "antiguedad_min": antiguedad,
-        "estado": estado,
+        "embedded": con_vec,
+        "without_chunks": sin_chunks,
+        "stale": vencidas,
+        "undated": sin_fecha,
+        "expiring_7d": por_vencer,
+        "model": config.MODELO,
+        "indexed_at": indexado,
+        "age_min": antiguedad,
+        "state": estado,
     }
     if args.json:
         _json(datos)
         return
     print(
-        f"notas={datos['notas']} chunks={datos['chunks']} "
-        f"con_embedding={datos['con_embedding']} sin_chunks={datos['sin_chunks']} "
-        f"vencidas={vencidas} sin_fecha={sin_fecha} estado={estado}\n"
-        f"vault={datos['vault']}\nindice={datos['indice']}"
+        f"notes={datos['notes']} chunks={datos['chunks']} "
+        f"embedded={datos['embedded']} without_chunks={datos['without_chunks']} "
+        f"stale={vencidas} undated={sin_fecha} state={estado}\n"
+        f"vault={datos['vault']}\nindex={datos['index']}"
     )
     if indexado:
-        print(f"indexado={indexado} (hace {antiguedad} min)")
+        print(f"indexed_at={indexado} ({antiguedad} min ago)")
     if por_vencer:
-        print(f"por vencer en 7 días: {por_vencer}")
+        print(f"expiring in 7 days: {por_vencer}")
 
 
 def cmd_stale(args: argparse.Namespace) -> None:
-    """Lista las notas cuya `stale_after` ya pasó. Sin índice no inventa: avisa."""
+    """List the notes whose `stale_after` has passed. With no index it does not guess: it says so."""
     import sqlite3
     from datetime import datetime, timezone
 
@@ -246,7 +246,7 @@ def cmd_stale(args: argparse.Namespace) -> None:
     from .vigencia import fecha_local
 
     if not config.DB.exists():
-        raise SystemExit(f"no hay índice en {config.DB}: corré `obsn reindex`")
+        raise SystemExit(f"no index at {config.DB}: run `obsn reindex`")
     ahora = datetime.now(timezone.utc)
     filas: list[dict] = []
     with contextlib.closing(sqlite3.connect(config.DB)) as c:
@@ -256,7 +256,7 @@ def cmd_stale(args: argparse.Namespace) -> None:
             total = c.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
         except sqlite3.OperationalError:
             raise SystemExit(
-                "el índice no tiene la columna de vigencia: corré `obsn reindex`") from None
+                "the index has no freshness column: run `obsn reindex`") from None
     for path, iso in pares:
         try:
             vence = datetime.fromisoformat(iso)
@@ -265,17 +265,17 @@ def cmd_stale(args: argparse.Namespace) -> None:
         if ahora >= vence:
             dias = (ahora - vence).days
             if args.days is None or dias >= args.days:
-                filas.append({"path": path, "stale_after": fecha_local(iso), "dias": dias})
-    filas.sort(key=lambda r: -r["dias"])
+                filas.append({"path": path, "stale_after": fecha_local(iso), "days": dias})
+    filas.sort(key=lambda r: -r["days"])
     if args.json:
-        _json({"vencidas": filas, "total_notas": total})
+        _json({"stale": filas, "total_notes": total})
         return
     if not filas:
-        print(f"(ninguna nota vencida de {total})")
+        print(f"(no stale notes out of {total})")
         return
     for f in filas:
-        print(f"{f['stale_after']}  hace {f['dias']:>4} días  {f['path']}")
-    print(f"\n{len(filas)} vencidas de {total} notas")
+        print(f"{f['stale_after']}  {f['days']:>4} days ago  {f['path']}")
+    print(f"\n{len(filas)} stale out of {total} notes")
 
 
 def cmd_graph(args: argparse.Namespace) -> None:
@@ -306,7 +306,7 @@ def cmd_edit(args: argparse.Namespace) -> None:
     viejo = args.old_flag if args.old_flag is not None else args.old
     if args.op == "replace" and not viejo:
         raise SystemExit(
-            "replace necesita el texto viejo: obsn edit <path> replace <nuevo> --old <viejo>"
+            "replace needs the old text: obsn edit <path> replace <new> --old <old>"
         )
     contenido = _pedir_contenido(args)
     print(vault.edit_note(args.path, args.op, contenido, old=viejo))
@@ -315,8 +315,8 @@ def cmd_edit(args: argparse.Namespace) -> None:
 
 
 def cmd_delete(args: argparse.Namespace) -> None:
-    if not _confirmar(f"¿Borrar {args.path}?", args):
-        print("cancelado")
+    if not _confirmar(f"Delete {args.path}?", args):
+        print("cancelled")
         return
     print(vault.delete_note(args.path, hard=args.hard))
     if not args.no_reindex:
@@ -324,14 +324,14 @@ def cmd_delete(args: argparse.Namespace) -> None:
 
 
 def cmd_move(args: argparse.Namespace) -> None:
-    print(vault.move_note(args.desde, args.hasta))
+    print(vault.move_note(args.src, args.dst))
     if not args.no_reindex:
         _encolar_reindex()
 
 
 def cmd_list(args: argparse.Namespace) -> None:
     if args.limit is not None and args.limit < 0:
-        raise SystemExit("--limit no puede ser negativo (0 o sin --limit = todas)")
+        raise SystemExit("--limit cannot be negative (0 or no --limit = all)")
     notas = vault.list_notes(folder=args.folder, limit=args.limit, tag=args.tag)
     if args.json:
         _json(notas)
@@ -358,24 +358,24 @@ def cmd_meta(args: argparse.Namespace) -> None:
 def construir_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="obsn",
-        description="Vault de Obsidian: RAG semántico + operaciones de archivo.",
+        description="Obsidian vault: semantic RAG + file operations.",
     )
     try:
         from importlib.metadata import version as _v
         ap.add_argument("--version", action="version", version=f"obsn {_v('obsidian-rag')}")
     except Exception:
-        ap.add_argument("--version", action="version", version="obsn (versión desconocida)")
+        ap.add_argument("--version", action="version", version="obsn (unknown version)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("rag", help="búsqueda semántica")
+    p = sub.add_parser("rag", help="semantic search")
     p.add_argument("query")
     p.add_argument("n", nargs="?", type=int, default=5)
     p.add_argument("--fresh-only", action="store_true",
-                   help="sólo notas vigentes (descarta las vencidas por stale_after)")
+                   help="only fresh notes (drop the ones past their stale_after)")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_rag)
 
-    p = sub.add_parser("search", aliases=["search_notes"], help="búsqueda léxica por contenido")
+    p = sub.add_parser("search", aliases=["search_notes"], help="lexical search by content")
     p.add_argument("terms", nargs="+")
     p.add_argument("--folder")
     p.add_argument("--tag")
@@ -383,85 +383,85 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_search)
 
-    p = sub.add_parser("reindex", help="construir/actualizar el índice")
+    p = sub.add_parser("reindex", help="build/update the index")
     p.add_argument("--force", action="store_true")
     p.set_defaults(func=cmd_reindex)
 
-    p = sub.add_parser("status", help="estado del índice")
+    p = sub.add_parser("status", help="index state")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_status)
 
-    p = sub.add_parser("stale", help="notas vencidas por stale_after")
+    p = sub.add_parser("stale", help="notes past their stale_after")
     p.add_argument("--days", type=int, default=None,
-                   help="sólo las que vencieron hace N días o más")
+                   help="only the ones that expired N days ago or more")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_stale)
 
-    p = sub.add_parser("upgrade", help="actualizar el paquete desde su repo git")
+    p = sub.add_parser("upgrade", help="update the package from its git repo")
     p.add_argument("--check", action="store_true",
-                   help="sólo informar: 0 al día, 10 hay actualización, 1 error")
-    p.add_argument("--how", action="store_true", help="explicar el procedimiento")
-    p.add_argument("--no-reindex", action="store_true", help="no reindexar después de actualizar")
+                   help="report only: 0 up to date, 10 update available, 1 error")
+    p.add_argument("--how", action="store_true", help="explain the procedure")
+    p.add_argument("--no-reindex", action="store_true", help="do not reindex after updating")
     p.set_defaults(func=cmd_upgrade)
 
-    p = sub.add_parser("graph", help="auditoría del grafo de wikilinks")
+    p = sub.add_parser("graph", help="wikilink graph audit")
     p.add_argument("resto", nargs=argparse.REMAINDER)
     p.set_defaults(func=cmd_graph)
 
-    p = sub.add_parser("link", help="propone/aplica wikilinks por similitud")
+    p = sub.add_parser("link", help="propose/apply wikilinks by similarity")
     p.add_argument("resto", nargs=argparse.REMAINDER)
     p.set_defaults(func=cmd_link)
 
-    p = sub.add_parser("read", aliases=["read_note"], help="leer una nota")
+    p = sub.add_parser("read", aliases=["read_note"], help="read a note")
     p.add_argument("path")
     p.set_defaults(func=cmd_read)
 
-    p = sub.add_parser("write", aliases=["write_note"], help="crear/sobreescribir una nota")
+    p = sub.add_parser("write", aliases=["write_note"], help="create/overwrite a note")
     p.add_argument("path")
     p.add_argument("content", nargs="?")
     p.add_argument("--file")
     p.add_argument("--no-reindex", action="store_true",
-                   help="no reindexar en segundo plano después de escribir")
+                   help="do not reindex in the background after writing")
     p.set_defaults(func=cmd_write)
 
     p = sub.add_parser("edit", aliases=["edit_note"], help="append | prepend | replace")
     p.add_argument("path")
     p.add_argument("op", choices=["append", "prepend", "replace"])
     p.add_argument("content", nargs="?")
-    p.add_argument("old", nargs="?", help="texto viejo a reemplazar (o usá --old)")
+    p.add_argument("old", nargs="?", help="old text to replace (or use --old)")
     p.add_argument("--old", dest="old_flag",
-                   help="texto viejo a reemplazar; pensado para combinar con --file")
+                   help="old text to replace; meant to be combined with --file")
     p.add_argument("--file")
     p.add_argument("--no-reindex", action="store_true",
-                   help="no reindexar en segundo plano después de editar")
+                   help="do not reindex in the background after editing")
     p.set_defaults(func=cmd_edit)
 
-    p = sub.add_parser("delete", aliases=["delete_note"], help="borrar (a la papelera)")
+    p = sub.add_parser("delete", aliases=["delete_note"], help="delete (to the trash)")
     p.add_argument("path")
-    p.add_argument("--hard", action="store_true", help="borrar de verdad (sin papelera)")
+    p.add_argument("--hard", action="store_true", help="delete for real (no trash)")
     p.add_argument("--yes", action="store_true")
     p.add_argument("--no-reindex", action="store_true",
-                   help="no reindexar en segundo plano después de borrar")
+                   help="do not reindex in the background after deleting")
     p.set_defaults(func=cmd_delete)
 
-    p = sub.add_parser("move", aliases=["move_note"], help="mover o renombrar")
-    p.add_argument("desde")
-    p.add_argument("hasta")
+    p = sub.add_parser("move", aliases=["move_note"], help="move or rename")
+    p.add_argument("src")
+    p.add_argument("dst")
     p.add_argument("--no-reindex", action="store_true",
-                   help="no reindexar en segundo plano después de mover")
+                   help="do not reindex in the background after moving")
     p.set_defaults(func=cmd_move)
 
-    p = sub.add_parser("list", aliases=["list_notes"], help="listar notas")
+    p = sub.add_parser("list", aliases=["list_notes"], help="list notes")
     p.add_argument("folder", nargs="?")
     p.add_argument("--limit", type=int)
     p.add_argument("--tag")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_list)
 
-    p = sub.add_parser("folders", aliases=["list_folders"], help="carpetas con conteo")
+    p = sub.add_parser("folders", aliases=["list_folders"], help="folders with counts")
     p.set_defaults(func=cmd_folders)
 
-    p = sub.add_parser("tags", aliases=["list_tags"], help="tags del vault")
+    p = sub.add_parser("tags", aliases=["list_tags"], help="vault tags")
     p.set_defaults(func=cmd_tags)
 
     p = sub.add_parser("meta", aliases=["get_note_metadata"], help="frontmatter, tags, backlinks")
@@ -473,15 +473,15 @@ def construir_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     ap = construir_parser()
-    # `graph` y `link` tienen su propio argparse: sus flags no están declarados acá, y con
-    # `REMAINDER` un `--stats` inicial lo rechaza el parser de arriba. Se aceptan los
-    # sobrantes y se pasan al módulo, que es quien valida.
+    # `graph` and `link` have their own argparse: their flags are not declared here, and with
+    # `REMAINDER` a leading `--stats` is rejected by the parser above. Leftovers are accepted
+    # and passed to the module, which is the one that validates.
     args, sobrantes = ap.parse_known_args(argv)
     if sobrantes:
         if hasattr(args, "resto"):
             args.resto = [*sobrantes, *args.resto]
         else:
-            ap.error(f"argumentos no reconocidos: {' '.join(sobrantes)}")
+            ap.error(f"unrecognized arguments: {' '.join(sobrantes)}")
     try:
         args.func(args)
     except vault.FueraDelVault as error:

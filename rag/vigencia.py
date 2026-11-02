@@ -1,8 +1,8 @@
-"""Vigencia declarada por la nota: `stale_after` y `updated`, al estilo OKF §5.5.
+"""Freshness declared by the note: `stale_after` and `updated`, in the OKF §5.5 style.
 
-La frescura no se adivina con el embedding: se declara en el frontmatter y se compara
-contra el reloj. Una nota sin `stale_after` no opina (queda "sin fecha"), porque
-castigar la ausencia convierte "no sé" en "es falso".
+Freshness is not guessed from the embedding: it is declared in the frontmatter and compared
+against the clock. A note with no `stale_after` does not opine (it stays "undated"), because
+punishing the absence turns "I don't know" into "it is false".
 """
 
 from __future__ import annotations
@@ -13,11 +13,11 @@ from zoneinfo import ZoneInfo
 
 
 def parse_fecha(valor: Any, tz: Optional[str] = None) -> Optional[datetime]:
-    """ISO 8601 -> datetime en UTC. `None` si el valor no es una fecha.
+    """ISO 8601 -> datetime in UTC. `None` if the value is not a date.
 
-    Una fecha sin hora (`2026-12-31`) vale hasta el FINAL de ese día en `tz` (la del
-    sistema si no se pasa una): es lo que espera quien escribe una fecha de vencimiento,
-    no la medianoche que la abre.
+    A date with no time (`2026-12-31`) is valid until the END of that day in `tz` (the
+    system's if none is passed): that is what someone writing an expiry date expects,
+    not the midnight that opens it.
     """
     if not isinstance(valor, str) or not valor.strip():
         return None
@@ -41,10 +41,10 @@ def vigencia(
     ahora: Optional[datetime] = None,
     tz: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Veredicto de vigencia a partir del frontmatter ya parseado.
+    """Freshness verdict from the already parsed frontmatter.
 
-    Devuelve `stale_after`/`updated` normalizados en ISO UTC, `vencida` (None si la nota
-    no declara fecha: no se opina) y `dias_vencida`.
+    Returns `stale_after`/`updated` normalized to ISO UTC, `stale` (None if the note
+    declares no date: no opinion) and `days_stale`.
     """
     ahora = ahora or datetime.now(timezone.utc)
     vence = parse_fecha(datos.get("stale_after"), tz=tz)
@@ -56,22 +56,22 @@ def vigencia(
     return {
         "stale_after": vence.isoformat() if vence else None,
         "updated": actualizado.isoformat() if actualizado else None,
-        "vencida": vencida,
-        "dias_vencida": dias,
+        "stale": vencida,
+        "days_stale": dias,
     }
 
 
 def resumen(vencidas: int, sin_fecha: int, total: int) -> str:
-    """Línea corta para `status`: se dice el total además del detalle."""
-    partes = [f"{vencidas} vencidas", f"{sin_fecha} sin fecha"]
-    return f"{total} notas ({', '.join(partes)})"
+    """Short line for `status`: the total is stated along with the detail."""
+    partes = [f"{vencidas} stale", f"{sin_fecha} undated"]
+    return f"{total} notes ({', '.join(partes)})"
 
 
 def fecha_local(iso: Optional[str], tz: Optional[str] = None) -> str:
-    """ISO UTC -> `YYYY-MM-DD` en la zona local (o en `tz` si se pasa).
+    """ISO UTC -> `YYYY-MM-DD` in the local zone (or in `tz` if passed).
 
-    Se guarda en UTC, pero se muestra en local: si no, un `stale_after: 2026-01-15`
-    escrito en -03 se leería como 2026-01-16 y parecería un día de más.
+    It is stored in UTC but shown locally: otherwise a `stale_after: 2026-01-15`
+    written in -03 would read as 2026-01-16 and look one day late.
     """
     if not iso:
         return ""
