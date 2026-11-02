@@ -134,10 +134,10 @@ def main():
     # --- vigencia: la nota con stale_after vencido se marca y se puede excluir
     dv = call("vault_search", {"query": "contenedores del servidor", "limit": 5})
     hit = next((x for x in dv.get("hits", []) if x["path"] == "01-Infra/docker.md"), None)
-    check("hybrid marca vencida=true en la nota vencida",
-          dv.get("ok") and hit is not None and hit.get("vencida") is True, str(hit))
+    check("hybrid marca stale=true en la nota vencida",
+          dv.get("ok") and hit is not None and hit.get("stale") is True, str(hit))
     check("la respuesta avisa cuántas vencidas trajo",
-          dv.get("vencidas") == 1 and "aviso" in dv, f"vencidas={dv.get('vencidas')}")
+          dv.get("stale_count") == 1 and "notice" in dv, f"stale_count={dv.get('stale_count')}")
     sf = call("vault_search", {"query": "contenedores del servidor", "limit": 5,
                                "fresh_only": True})
     check("fresh_only excluye la vencida",

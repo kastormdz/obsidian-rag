@@ -43,7 +43,7 @@ def search(args: dict, **kwargs) -> str:
     try:
         query = (args.get("query") or "").strip()
         if not query:
-            return _fail(ValueError("query vacía"))
+            return _fail(ValueError("empty query"))
         limit = _int(args.get("limit"), 8, 1, MAX_SEARCH)
         mode = args.get("mode") or "hybrid"
         folder = _clean(args.get("folder")).rstrip("/")
@@ -60,22 +60,24 @@ def search(args: dict, **kwargs) -> str:
             hits = [
                 {"path": r.get("path"), "matches": r.get("matches"),
                  "in_path": bool(r.get("path_hit")), "context": _snippet(r.get("context", "")),
-                 # `exact` no pasa por el índice: no sabe de vigencia, y null lo dice.
-                 "vencida": None, "stale_after": None}
+                 # `exact` does not go through the index: it knows nothing about freshness,
+                 # and null says exactly that.
+                 "stale": None, "stale_after": None}
                 for r in rows
             ]
         else:
-            # En híbrido el filtro por tag no existe: el índice no guarda tags, y fingir
-            # que se aplicó es peor que decir que no. El de carpeta sí: es prefijo de path.
+            # In hybrid mode the tag filter does not exist: the index stores no tags, and
+            # pretending it applied is worse than saying it cannot. The folder one does:
+            # it is a path prefix.
             if tag:
                 return _fail(ValueError(
-                    "mode=hybrid no filtra por tag (el índice no guarda tags). Usá "
-                    "mode=exact con tag, o vault_list para ubicar la carpeta y filtrá por folder."
+                    "mode=hybrid does not filter by tag (the index stores no tags). Use "
+                    "mode=exact with tag, or vault_list to locate the folder and filter by folder."
                 ))
-            # Se piden MÁS chunks que notas queridas: `rag` devuelve chunks y acá se
-            # deduplica por path. Pidiendo `limit` pelado, una nota con varios chunks
-            # ganadores dejaba la respuesta en 1 o 2 notas aunque se pidieran 5. Con folder
-            # se pide más margen, porque el filtro se aplica después de deduplicar.
+            # Ask for MORE chunks than wanted notes: `rag` returns chunks and dedup happens
+            # here by path. Asking for a bare `limit` left the answer at 1 or 2 notes even
+            # when 5 were requested, because one note can win with several chunks. With
+            # `folder` more margin is needed, since the filter runs after dedup.
             pedir = min(limit * (5 if folder else 3), 60)
             flags = ["--fresh-only"] if fresh_only else []
             rows = client.run("rag", query, str(pedir), flags=flags, want_json=True)
@@ -92,8 +94,8 @@ def search(args: dict, **kwargs) -> str:
                     "heading": r.get("heading") or "",
                     "score": round(float(r.get("score") or 0), 3),
                     "snippet": _snippet(r.get("text", "")),
-                    # None = la nota no declara fecha; no es lo mismo que "vigente".
-                    "vencida": r.get("vencida"),
+                    # None = the note declares no date; that is not the same as "fresh".
+                    "stale": r.get("vencida"),
                     "stale_after": (r.get("stale_after") or "")[:10] or None,
                 })
                 if len(hits) >= limit:
@@ -104,17 +106,17 @@ def search(args: dict, **kwargs) -> str:
             payload["folder"] = folder
         if fresh_only:
             payload["fresh_only"] = True
-        vencidas = sum(1 for h in hits if h.get("vencida"))
+        vencidas = sum(1 for h in hits if h.get("stale"))
         if vencidas:
-            payload["vencidas"] = vencidas
-            payload["aviso"] = (
-                f"{vencidas} de {len(hits)} resultados están VENCIDOS según su stale_after. "
-                "Decí la fecha al citarlos o buscá con fresh_only=true."
+            payload["stale_count"] = vencidas
+            payload["notice"] = (
+                f"{vencidas} of {len(hits)} results are STALE according to their stale_after. "
+                "State the date when citing them, or search again with fresh_only=true."
             )
         if not hits:
             payload["note"] = (
-                "Sin resultados. Probá mode=exact con un término literal que aparezca en el "
-                "vault, o vault_status si sospechás que el índice está viejo."
+                "No results. Try mode=exact with a literal term that appears in the vault, "
+                "or vault_status if you suspect the index is stale."
             )
         return _ok(**payload)
     except Exception as exc:  # noqa: BLE001 - a tool must never raise
@@ -127,11 +129,11 @@ def read(args: dict, **kwargs) -> str:
     try:
         path = _clean(args.get("path"))
         if not path:
-            return _fail(ValueError("path vacío"))
+            return _fail(ValueError("empty path"))
         text = client.run("read", path)
         truncated = len(text) > MAX_CONTENT
         return _ok(path=path, chars=len(text), truncated=truncated,
-                   content=text[:MAX_CONTENT] + ("\n\n[… nota truncada]" if truncated else ""))
+                   content=text[:MAX_CONTENT] + ("\n\n[… note truncated]" if truncated else ""))
     except Exception as exc:  # noqa: BLE001
         return _fail(exc)
 
@@ -144,9 +146,9 @@ def write(args: dict, **kwargs) -> str:
         path = _clean(args.get("path"))
         content = args.get("content")
         if not path:
-            return _fail(ValueError("path vacío"))
+            return _fail(ValueError("empty path"))
         if content is None:
-            return _fail(ValueError("falta content"))
+            return _fail(ValueError("missing content"))
         mode = args.get("mode") or "create"
 
         if mode == "create":
@@ -154,18 +156,18 @@ def write(args: dict, **kwargs) -> str:
             out = client.run("write", path, flags=("--file", tmp))
         else:
             if mode == "replace" and not args.get("old"):
-                return _fail(ValueError("mode=replace necesita `old`"))
+                return _fail(ValueError("mode=replace needs `old`"))
             tmp = client.with_content_file(content)
             if mode == "replace":
-                # `--old` va como flag: el cuerpo viene de --file y el texto viejo no puede
-                # ser un positional libre (argparse se lo comía como contenido).
+                # `--old` is a flag: the body comes from --file and the old text cannot be a
+                # free positional (argparse would read it as the content).
                 out = client.run("edit", path, "replace",
                                  flags=("--file", tmp, "--old", str(args["old"])))
             else:
                 out = client.run("edit", path, mode, flags=("--file", tmp))
 
         return _ok(path=path, mode=mode, output=(out or "").strip()[:400],
-                   reindex="en segundo plano; el índice se actualiza solo en ~2 s")
+                   reindex="in the background; the index catches up in ~2 s")
     except Exception as exc:  # noqa: BLE001
         return _fail(exc)
     finally:
@@ -216,7 +218,7 @@ def move(args: dict, **kwargs) -> str:
     try:
         src, dst = _clean(args.get("from")), _clean(args.get("to"))
         if not src or not dst:
-            return _fail(ValueError("hacen falta `from` y `to`"))
+            return _fail(ValueError("both `from` and `to` are required"))
         out = client.run("move", src, dst)
         return _ok(**{"from": src, "to": dst}, output=(out or "").strip()[:400])
     except Exception as exc:  # noqa: BLE001
@@ -227,7 +229,7 @@ def delete(args: dict, **kwargs) -> str:
     try:
         path = _clean(args.get("path"))
         if not path:
-            return _fail(ValueError("path vacío"))
+            return _fail(ValueError("empty path"))
         permanent = bool(args.get("permanent"))
         flags = ["--yes"] + (["--hard"] if permanent else [])
         out = client.run("delete", path, flags=flags)

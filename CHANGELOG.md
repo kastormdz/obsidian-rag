@@ -8,6 +8,17 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ## [Unreleased]
 
+### Changed
+
+- **Superficie del plugin en inglés** (`0.3.1`): descripciones de las tools, mensajes de error,
+  avisos, `plugin.yaml` y la skill `vault` pasan a inglés, que es lo que lee el modelo y lo que
+  ve un usuario del catálogo. El README del plugin queda en inglés con copia en
+  `README.es.md`. En los hits, `vencida` pasa a llamarse `stale`, el conteo `vencidas` es
+  `stale_count` y el aviso es `notice`.
+- **Entorno mínimo en el subproceso**: el plugin ya no le pasa a `obsn` el entorno completo de
+  Hermes (con claves de proveedores y tokens del gateway), sólo `PATH`, `HOME`, `TMPDIR`,
+  locale, `TZ` y las variables `OBS_RAG_*` / `XDG_*`.
+
 ## [0.5.0] - 2026-10-29
 
 ### Added

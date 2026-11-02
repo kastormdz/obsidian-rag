@@ -1,9 +1,9 @@
 name: obsidian-rag
-version: 0.3.0
+version: 0.3.1
 manifest_version: 2
 description: >-
-  Búsqueda híbrida y CRUD de notas sobre un vault de Obsidian, con obsn como motor.
-  Sin dependencias de Python: cada tool ejecuta el binario obsn.
+  Hybrid search and note CRUD over an Obsidian vault, with obsn as the engine.
+  No Python dependencies: every tool runs the obsn binary.
 author: kastormdz
 license: MIT
 homepage: https://github.com/kastormdz/obsidian-rag
@@ -25,14 +25,14 @@ config_schema:
     type: str
     default: ""
     description: >-
-      Ruta al binario obsn. Vacío = buscarlo en PATH.
+      Path to the obsn binary. Empty = look it up in PATH.
   vault:
     type: str
     default: ""
     description: >-
-      Carpeta del vault (la que contiene .obsidian/). Vacío = OBS_RAG_VAULT del
-      entorno, o el default de obsidian-rag.
+      Vault folder (the one that contains .obsidian/). Empty = OBS_RAG_VAULT from
+      the environment, or obsidian-rag's default.
   timeout:
     type: int
     default: 30
-    description: Segundos máximos por llamada a obsn.
+    description: Maximum seconds per obsn call.

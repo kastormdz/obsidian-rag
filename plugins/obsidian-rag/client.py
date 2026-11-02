@@ -51,18 +51,35 @@ def binary() -> str:
     path = _CFG["obsn"] or shutil.which("obsn")
     if not path:
         raise ObsnError(
-            "obsn no está en PATH. Instalá obsidian-rag (pip install -e .) o apuntá "
-            "plugins.entries.obsidian-rag.obsn a la ruta del binario."
+            "obsn is not in PATH. Install obsidian-rag (pip install -e .) or point "
+            "plugins.entries.obsidian-rag.obsn at the binary."
         )
     return path
+
+
+# Only what obsn needs to find its binary, its vault and its caches. The full Hermes
+# environment carries provider keys and gateway tokens, and a child process that does not
+# need them should not be able to read them.
+_ENV_PASSTHROUGH = (
+    "PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
+)
+_ENV_PREFIXES = ("OBS_RAG_", "XDG_")
+
+
+def _env() -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items()
+           if k in _ENV_PASSTHROUGH or k.startswith(_ENV_PREFIXES)}
+    if _CFG["vault"]:
+        env["OBS_RAG_VAULT"] = _CFG["vault"]
+    return env
 
 
 def run(sub: str, *args: str, flags: Sequence[str] = (), want_json: bool = False,
         stdin: str | None = None) -> Any:
     """Run ``obsn <sub> [flags] [--] <args>`` and return parsed JSON (``want_json``) or stdout.
 
-    Los posicionales van SIEMPRE después de ``--``: así una búsqueda de ``--force`` o un
-    path que empieza con ``-`` no se interpretan como opciones del CLI.
+    Positional arguments always go after ``--``, so a query like ``--force`` or a path
+    starting with ``-`` is not read as a CLI option.
     """
     cmd = [binary(), sub]
     if want_json:
@@ -71,30 +88,27 @@ def run(sub: str, *args: str, flags: Sequence[str] = (), want_json: bool = False
     if args:
         cmd.append("--")
         cmd.extend(args)
-    env = dict(os.environ)
-    if _CFG["vault"]:
-        env["OBS_RAG_VAULT"] = _CFG["vault"]
     try:
         proc = subprocess.run(
             cmd, input=stdin, capture_output=True, text=True,
-            timeout=_CFG["timeout"], env=env,
+            timeout=_CFG["timeout"], env=_env(),
         )
     except FileNotFoundError:
-        raise ObsnError(f"no se pudo ejecutar {cmd[0]!r}") from None
+        raise ObsnError(f"could not execute {cmd[0]!r}") from None
     except subprocess.TimeoutExpired:
         raise ObsnError(
-            f"obsn {sub} pasó de {_CFG['timeout']} s; subí plugins.entries."
-            "obsidian-rag.timeout si el vault es grande"
+            f"obsn {sub} took longer than {_CFG['timeout']} s; raise plugins.entries."
+            "obsidian-rag.timeout if the vault is large"
         ) from None
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()
-        raise ObsnError(detail[:800] or f"obsn {sub} salió con {proc.returncode}")
+        raise ObsnError(detail[:800] or f"obsn {sub} exited with {proc.returncode}")
     if not want_json:
         return proc.stdout
     try:
         return json.loads(proc.stdout)
     except ValueError:
-        raise ObsnError(f"obsn devolvió algo que no es JSON: {proc.stdout[:200]!r}") from None
+        raise ObsnError(f"obsn returned something that is not JSON: {proc.stdout[:200]!r}") from None
 
 
 def with_content_file(content: str) -> str:

@@ -20,24 +20,24 @@ RULE_KEY = "vault_delete_permanent"
 
 
 def _on_pre_tool_call(tool_name: str = "", args: dict | None = None, **kwargs):
-    """Ask before the only irreversible action: ``vault_delete`` con ``permanent: true``.
+    """Ask before the only irreversible action: ``vault_delete`` with ``permanent: true``.
 
-    El resto de los tools escribe de forma atómica o manda a la papelera, así que no
-    necesitan aprobación. Este borra el archivo de verdad y no se deshace: el modelo no
-    puede decidirlo solo. ``rule_key`` hace que un "siempre" cubra las llamadas siguientes.
+    Every other tool writes atomically or moves the note to the trash, so they need no
+    approval. This one deletes the file for real and cannot be undone: the model should not
+    decide that on its own. ``rule_key`` makes a "always" cover the following calls.
     """
     if tool_name != "vault_delete":
         return None
     params = args or {}
     if not params.get("permanent"):
         return None
-    path = str(params.get("path") or "").strip() or "(sin path)"
+    path = str(params.get("path") or "").strip() or "(no path)"
     return {
         "action": "approve",
         "message": (
-            f"vault_delete PERMANENTE sobre {path}\n"
-            "Borra el archivo sin papelera y no se puede deshacer. "
-            "Con `permanent: false` va a .trash y sí se recupera."
+            f"vault_delete PERMANENT on {path}\n"
+            "Deletes the file without the trash and cannot be undone. "
+            "With `permanent: false` it goes to .trash and can be recovered."
         ),
         "rule_key": RULE_KEY,
     }
@@ -62,7 +62,7 @@ def register(ctx) -> None:
         try:
             ctx.register_skill(
                 "vault", SKILL,
-                description="Cuándo usar cada tool del vault, convenciones de escritura y qué hacer si la búsqueda no encuentra.",
+                description="When to use each vault tool, writing conventions, and what to do when a search finds nothing.",
             )
         except Exception as exc:  # neither a missing nor a clashing skill should disable the tools
-            log.warning("obsidian-rag: no se pudo registrar la skill: %s", exc)
+            log.warning("obsidian-rag: could not register the skill: %s", exc)

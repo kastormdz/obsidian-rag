@@ -2,26 +2,27 @@
 
 from __future__ import annotations
 
-_PATH_HELP = "Ruta relativa a la raíz del vault, con o sin .md (ej. '01-Technical/docker.md')."
+_PATH_HELP = "Path relative to the vault root, with or without .md (e.g. '01-Technical/docker.md')."
 
 SEARCH = {
     "name": "vault_search",
     "description": (
-        "Busca en el vault de Obsidian del usuario. Arranca siempre por acá antes de "
-        "responder algo que pueda estar en sus notas. `mode: hybrid` (default) entiende "
-        "paráfrasis y devuelve pasajes con su heading; `mode: exact` es substring literal, "
-        "para cuando sabés la palabra exacta y querés velocidad. Devuelve paths: leé el que "
-        "interese con vault_read."
+        "Search the user's Obsidian vault. Start here before answering anything that could "
+        "be in their notes. `mode: hybrid` (default) understands paraphrases and returns "
+        "passages with their heading; `mode: exact` is a literal substring match, for when "
+        "you know the exact word and want speed. Returns paths: read the one you need with "
+        "vault_read. Each hit carries `stale` (true/false/null) when the note declares an "
+        "expiry date; null means no date was declared, which is not the same as fresh."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "Qué buscar, en lenguaje natural o el término literal según el modo."},
-            "limit": {"type": "integer", "description": "Máximo de resultados (default 8, tope 25)."},
-            "mode": {"type": "string", "enum": ["hybrid", "exact"], "description": "hybrid = semántica + léxica; exact = substring."},
-            "folder": {"type": "string", "description": "Filtra por carpeta (ej. '03-Personal'). Funciona en los dos modos."},
-            "tag": {"type": "string", "description": "Sólo mode=exact: el índice no guarda tags y en hybrid se rechaza."},
-            "fresh_only": {"type": "boolean", "description": "Sólo mode=hybrid: descarta notas vencidas por su stale_after. Un resultado trae vencida=true|false|null (null = la nota no declara fecha)."},
+            "query": {"type": "string", "description": "What to look for, in natural language or the literal term depending on mode."},
+            "limit": {"type": "integer", "description": "Maximum results (default 8, cap 25)."},
+            "mode": {"type": "string", "enum": ["hybrid", "exact"], "description": "hybrid = semantic + lexical; exact = substring."},
+            "folder": {"type": "string", "description": "Restrict to a folder (e.g. '03-Personal'). Works in both modes."},
+            "tag": {"type": "string", "description": "mode=exact only: the index does not store tags, and hybrid rejects it."},
+            "fresh_only": {"type": "boolean", "description": "mode=hybrid only: drop notes past their stale_after. Each hit reports stale=true|false|null (null = the note declares no date)."},
         },
         "required": ["query"],
     },
@@ -29,7 +30,7 @@ SEARCH = {
 
 READ = {
     "name": "vault_read",
-    "description": ("Lee una nota entera del vault. Usalo después de vault_search para ver el contexto completo antes de citar o editar."),
+    "description": ("Read a whole note from the vault. Use it after vault_search to see the full context before quoting or editing."),
     "parameters": {
         "type": "object",
         "properties": {"path": {"type": "string", "description": _PATH_HELP}},
@@ -40,19 +41,19 @@ READ = {
 WRITE = {
     "name": "vault_write",
     "description": (
-        "Crea o modifica una nota. `mode: create` (default) escribe el contenido completo "
-        "y pisa si existe; `append` y `prepend` agregan; `replace` sustituye `old` por el "
-        "contenido nuevo. Antes de crear una nota nueva, buscá la canónica con vault_search: "
-        "si ya existe una del mismo tema, va como sección adentro, no como nota paralela. "
-        "El índice se actualiza solo en segundo plano."
+        "Create or modify a note. `mode: create` (default) writes the full content and "
+        "overwrites if it exists; `append` and `prepend` add to it; `replace` swaps `old` "
+        "for the new content. Before creating a new note, look for the canonical one with "
+        "vault_search: if a note on the same subject exists, it belongs as a section "
+        "inside it, not as a parallel note. The index refreshes in the background."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "path": {"type": "string", "description": _PATH_HELP},
-            "content": {"type": "string", "description": "Markdown a escribir."},
-            "mode": {"type": "string", "enum": ["create", "append", "prepend", "replace"], "description": "create pisa el archivo; append/prepend agregan; replace necesita `old`."},
-            "old": {"type": "string", "description": "Sólo para mode=replace: el texto exacto a reemplazar."},
+            "content": {"type": "string", "description": "Markdown to write."},
+            "mode": {"type": "string", "enum": ["create", "append", "prepend", "replace"], "description": "create overwrites the file; append/prepend add; replace needs `old`."},
+            "old": {"type": "string", "description": "mode=replace only: the exact text to replace."},
         },
         "required": ["path", "content"],
     },
@@ -61,29 +62,29 @@ WRITE = {
 LIST = {
     "name": "vault_list",
     "description": (
-        "Explora la estructura del vault sin buscar contenido. `mode: notes` lista rutas "
-        "(con folder y/o tag opcionales), `mode: folders` las carpetas con su conteo, "
-        "`mode: tags` los tags ordenados por uso. Sirve para saber dónde archivar algo."
+        "Explore the vault structure without searching content. `mode: notes` lists paths "
+        "(optional folder and/or tag), `mode: folders` lists folders with their note count, "
+        "`mode: tags` lists tags ordered by usage. Useful for deciding where something belongs."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "mode": {"type": "string", "enum": ["notes", "folders", "tags"], "description": "Qué listar (default notes)."},
-            "folder": {"type": "string", "description": "Sólo mode=notes: prefijo de carpeta."},
-            "tag": {"type": "string", "description": "Sólo mode=notes: tag exacto, sin #."},
-            "limit": {"type": "integer", "description": "Máximo de filas (default 40)."},
+            "mode": {"type": "string", "enum": ["notes", "folders", "tags"], "description": "What to list (default notes)."},
+            "folder": {"type": "string", "description": "mode=notes only: folder prefix."},
+            "tag": {"type": "string", "description": "mode=notes only: exact tag, without #."},
+            "limit": {"type": "integer", "description": "Maximum rows (default 40)."},
         },
     },
 }
 
 MOVE = {
     "name": "vault_move",
-    "description": "Mueve o renombra una nota dentro del vault. No pisa el destino: si existe, falla.",
+    "description": "Move or rename a note inside the vault. It never overwrites the destination: if it exists, the call fails.",
     "parameters": {
         "type": "object",
         "properties": {
             "from": {"type": "string", "description": _PATH_HELP},
-            "to": {"type": "string", "description": "Ruta nueva, relativa a la raíz del vault."},
+            "to": {"type": "string", "description": "New path, relative to the vault root."},
         },
         "required": ["from", "to"],
     },
@@ -92,14 +93,14 @@ MOVE = {
 DELETE = {
     "name": "vault_delete",
     "description": (
-        "Borra una nota. Por defecto va a la papelera del vault (.trash), así que se puede "
-        "recuperar; `permanent: true` la borra de verdad y no se deshace."
+        "Delete a note. By default it goes to the vault's trash (.trash), so it can be "
+        "recovered; `permanent: true` deletes it for real and cannot be undone."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "path": {"type": "string", "description": _PATH_HELP},
-            "permanent": {"type": "boolean", "description": "Borrado real, sin papelera. Default false."},
+            "permanent": {"type": "boolean", "description": "Real delete, no trash. Default false."},
         },
         "required": ["path"],
     },
@@ -108,10 +109,10 @@ DELETE = {
 STATUS = {
     "name": "vault_status",
     "description": (
-        "Estado del índice: vault activo, cantidad de notas y chunks, modelo de embeddings, "
-        "notas sin contenido indexable y cuándo se indexó (antiguedad_min). Usalo cuando una "
-        "búsqueda no devuelve nada que debería existir, para descartar un índice viejo o "
-        "apuntado a otro vault."
+        "Index status: active vault, note and chunk counts, embedding model, notes with no "
+        "indexable content, how long ago it was indexed (antiguedad_min) and how many notes "
+        "are stale or undated. Use it when a search returns nothing that should exist, to "
+        "rule out a stale index or one pointing at another vault."
     ),
     "parameters": {"type": "object", "properties": {}},
 }

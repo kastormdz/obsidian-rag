@@ -1,66 +1,66 @@
 ---
 name: vault
-description: Buscar, leer y escribir en el vault de Obsidian del usuario a través de los tools vault_*.
+description: Search, read and write in the user's Obsidian vault through the vault_* tools.
 ---
 
-# El vault del usuario
+# The user's vault
 
-Un vault de Obsidian indexado con obsidian-rag. Los tools son un envoltorio del binario
-`obsn`: ellos hacen la búsqueda híbrida, leen y escriben los `.md`, y mantienen el índice.
+An Obsidian vault indexed with obsidian-rag. The tools wrap the `obsn` binary: they run the
+hybrid search, read and write the `.md` files, and keep the index fresh.
 
-## El orden que funciona
+## The order that works
 
-1. **`vault_search`** antes de responder cualquier cosa que pueda estar en sus notas. Es
-   fuente primaria, no último recurso: el vault tiene infra, finanzas, config, seguridad y
-   vida personal.
-2. **`vault_read`** sobre el hit que interesa. El snippet de la búsqueda es un pasaje, no la
-   nota: para citar o editar, leé la nota entera.
-3. Recién ahí contestás o escribís.
+1. **`vault_search`** before answering anything that could be in their notes. It is a primary
+   source, not a last resort: the vault holds infra, finances, config, security and personal
+   life.
+2. **`vault_read`** on the hit you care about. The search snippet is a passage, not the note:
+   to quote or edit, read the whole note.
+3. Only then answer or write.
 
-## Buscar bien
+## Searching well
 
-- Empezá en `hybrid`. Entiende paráfrasis y devuelve el heading de cada pasaje.
-- Si `hybrid` no trae nada, cambiá a `mode: exact` con una palabra que sepas que está en el
-  texto (un nombre de servicio, un comando, una sigla). El substring no perdona.
-- Si tampoco, **`vault_status`**: confirma a qué vault y a qué índice está apuntando y
-  cuántas notas ve. Un índice de otro vault explica todos los vacíos.
-- `folder` y `tag` en `hybrid`: `folder` filtra por prefijo; `tag` se rechaza, porque el
-  índice no guarda tags.
+- Start with `hybrid`. It understands paraphrases and returns each passage's heading.
+- If `hybrid` returns nothing, switch to `mode: exact` with a word you know is in the text (a
+  service name, a command, an acronym). Substring matching does not forgive.
+- If that also fails, **`vault_status`**: confirm which vault and which index it is pointing
+  at, and how many notes it sees. An index from another vault explains every empty result.
+- `folder` and `tag` in `hybrid`: `folder` filters by prefix; `tag` is rejected because the
+  index does not store tags.
 
-## Vigencia: no cites algo vencido como si fuera de hoy
+## Freshness: do not cite a stale note as if it were current
 
-Cada hit puede traer `vencida`: `false` (sigue vigente), `true` (pasó su `stale_after`) o
-`null` (la nota no declara fecha). Si viene `true`:
+Each hit may carry `stale`: `false` (still valid), `true` (past its `stale_after`) or `null`
+(the note declares no date). When it is `true`:
 
-- decí **cuándo venció** al citarla ("esto es de agosto, verificalo"), nunca lo presentes como
-  estado actual;
-- si la respuesta tiene que ser cierta hoy, repetí la búsqueda con `fresh_only: true`;
-- si el dato ya no sirve, ofrecé corregir la nota en vez de seguir repitiéndolo.
+- say **when it expired** when citing it ("this is from August, worth verifying"), and never
+  present it as current state;
+- if the answer has to be true today, run the search again with `fresh_only: true`;
+- if the fact no longer holds, offer to fix the note instead of repeating it.
 
-`null` no es "vigente": es "nadie declaró". No lo presentes como garantía.
+`null` is not "fresh": it is "nobody declared". Do not present it as a guarantee.
 
-## Escribir sin ensuciar el vault
+## Writing without dirtying the vault
 
-- **Buscá antes de crear.** Si ya hay una nota del mismo tema, va como sección adentro con
-  `mode: append`, no como nota paralela con nombre nuevo.
-- Los paths son relativos a la raíz del vault y con la carpeta adentro:
-  `01-Technical/docker.md`. Sin barra inicial.
-- `mode: create` pisa el archivo entero. Para agregar sin perder nada: `append` o `prepend`.
-  Para cambiar una frase: `replace` con el texto exacto en `old`.
-- No inventes carpetas nuevas sin mirar `vault_list` con `mode: folders`: el vault ya tiene
-  una estructura y las notas fuera de lugar no aparecen en los índices del usuario.
+- **Search before creating.** If a note on the same subject already exists, it belongs inside
+  it with `mode: append`, not as a parallel note with a new name.
+- Paths are relative to the vault root and include the folder: `01-Technical/docker.md`. No
+  leading slash.
+- `mode: create` overwrites the whole file. To add without losing anything: `append` or
+  `prepend`. To change one sentence: `replace` with the exact text in `old`.
+- Do not invent new folders without checking `vault_list` with `mode: folders`: the vault
+  already has a structure, and misplaced notes do not show up in the user's indexes.
 
-## Borrar y mover
+## Deleting and moving
 
-- `vault_delete` manda a `.trash` por defecto: es recuperable, pero igual conviene decirlo
-  al usuario cuando se borra algo que él no pidió borrar.
-- `permanent: true` no se deshace y **pide aprobación del usuario**: el plugin lo frena con un
-  hook `pre_tool_call`, porque es el único tool irreversible. Si el usuario aprueba, seguí; si
-  no, dejalo en la papelera. No busques la vuelta (borrar y recrear, o `--hard` por terminal):
-  el freno está ahí por algo.
-- `vault_move` no pisa: si el destino existe, falla. Renombrá con intención.
+- `vault_delete` goes to `.trash` by default: it is recoverable, but still tell the user when
+  you delete something they did not ask to delete.
+- `permanent: true` cannot be undone and **requires the user's approval**: the plugin stops it
+  with a `pre_tool_call` hook because it is the only irreversible tool. If the user approves,
+  continue; if not, leave it in the trash. Do not look for a way around it (delete and
+  recreate, or `--hard` from a terminal): the guard is there for a reason.
+- `vault_move` never overwrites: if the destination exists, it fails. Rename on purpose.
 
-## Después de escribir
+## After writing
 
-El índice se actualiza solo, en segundo plano, en un par de segundos. No hace falta
-reindexar a mano ni avisar de eso al usuario.
+The index refreshes on its own, in the background, within a couple of seconds. No manual
+reindex, and no need to tell the user about it.

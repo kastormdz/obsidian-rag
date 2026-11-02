@@ -1,95 +1,98 @@
-# Plugin de Hermes para obsidian-rag
+# Hermes plugin for obsidian-rag
 
-Siete tools para que un agente de Hermes busque, lea y escriba en el vault, con `obsn`
-como motor. Sin dependencias de Python: el plugin es un adaptador sobre el binario.
+Seven tools so a Hermes agent can search, read and write in the vault, with `obsn` as the
+engine. No Python dependencies: the plugin is an adapter over the binary.
 
 ```
 plugins/obsidian-rag/
-├── plugin.yaml      # manifiesto (tools, config, versión)
+├── plugin.yaml      # manifest (tools, config, version)
 ├── __init__.py      # register(ctx)
-├── schemas.py       # lo que ve el modelo
+├── schemas.py       # what the model reads
 ├── tools.py         # handlers
 ├── client.py        # subprocess → obsn
-└── skills/vault/SKILL.md   # cuándo usar cada tool (se carga como obsidian-rag:vault)
+└── skills/vault/SKILL.md   # when to use each tool (loaded as obsidian-rag:vault)
 ```
 
-## Los tools
+## The tools
 
-| Tool | Qué hace | Motor |
+| Tool | What it does | Engine |
 |---|---|---|
-| `vault_search` | Búsqueda híbrida (`hybrid`) o substring (`exact`), con folder/tag; devuelve `vencida` por hit y acepta `fresh_only` | `obsn rag` · `obsn search` |
-| `vault_read` | Lee una nota entera | `obsn read` |
-| `vault_write` | Crea, agrega, prepende o reemplaza texto | `obsn write` · `obsn edit` |
-| `vault_list` | Notas, carpetas con conteo o tags con uso | `obsn list` · `folders` · `tags` |
-| `vault_move` | Mueve o renombra; no pisa el destino | `obsn move` |
-| `vault_delete` | A la papelera, o permanente con `permanent: true` (**pide aprobación**) | `obsn delete` |
-| `vault_status` | Vault activo, notas, chunks, modelo | `obsn status` |
+| `vault_search` | Hybrid search (`hybrid`) or substring (`exact`), with folder/tag; each hit carries `stale` and accepts `fresh_only` | `obsn rag` · `obsn search` |
+| `vault_read` | Reads a whole note | `obsn read` |
+| `vault_write` | Creates, appends, prepends or replaces text | `obsn write` · `obsn edit` |
+| `vault_list` | Notes, folders with counts, or tags by usage | `obsn list` · `folders` · `tags` |
+| `vault_move` | Moves or renames; never overwrites the destination | `obsn move` |
+| `vault_delete` | To the trash, or permanent with `permanent: true` (**asks for approval**) | `obsn delete` |
+| `vault_status` | Active vault, notes, chunks, model, stale count | `obsn status` |
 
-El único tool irreversible es `vault_delete` con `permanent: true`. Un hook `pre_tool_call`
-devuelve `{"action": "approve", ...}` con `rule_key: vault_delete_permanent`, así que el
-usuario ve el path antes de que se borre algo sin vuelta. El borrado normal va a `.trash` y
-no pregunta.
+The only irreversible tool is `vault_delete` with `permanent: true`. A `pre_tool_call` hook
+returns `{"action": "approve", ...}` with `rule_key: vault_delete_permanent`, so the user sees
+the path before something is deleted for good. Normal deletes go to `.trash` and do not ask.
 
-## Instalar
+## Install
 
 ```bash
-# desde el repo (recomendado: queda pinneado y actualizable)
+# from the repo (recommended: pinned and updatable)
 hermes plugins install kastormdz/obsidian-rag#plugins/obsidian-rag --no-enable
 hermes plugins enable obsidian-rag
 ```
 
-Para desarrollo, sin instalar:
+For development, without installing:
 
 ```bash
 ln -s "$PWD/plugins/obsidian-rag" ~/.hermes/plugins/obsidian-rag
-hermes plugins doctor plugins/obsidian-rag --ci   # valida sin instalar
+hermes plugins doctor plugins/obsidian-rag --ci   # validates without installing
 ```
 
-Los tools aparecen en la sesión siguiente (`/new`), no en la que está corriendo.
+The tools show up in the next session (`/new`), not in the one currently running.
 
-## Configurar
+## Configure
 
 ```yaml
 plugins:
   entries:
     obsidian-rag:
-      obsn: ""            # vacío = buscarlo en PATH
-      vault: ""           # carpeta con .obsidian/; vacío = OBS_RAG_VAULT
-      timeout: 30         # segundos por llamada
+      obsn: ""            # empty = look it up in PATH
+      vault: ""           # folder containing .obsidian/; empty = OBS_RAG_VAULT
+      timeout: 30         # seconds per call
 ```
 
-## Por qué un subprocess y no importar `rag`
+## Why a subprocess instead of importing `rag`
 
-Medido en este equipo:
+Measured on this machine:
 
 | | |
 |---|---|
-| `obsn rag` completo | **73 ms** |
-| de eso, arranque del intérprete | 24 ms |
-| `import rag.index` en el proceso del gateway | 33 ms **+ numpy/onnxruntime residentes** |
+| `obsn rag` end to end | **73 ms** |
+| of which, interpreter startup | 24 ms |
+| `import rag.index` inside the gateway process | 33 ms **+ numpy/onnxruntime resident** |
 
-Ganar 24 ms no paga meter numpy y un modelo ONNX de 241 MB dentro del proceso del agente,
-ni acoplar la versión del plugin al esquema del índice. Además, un fallo en la búsqueda no
-se lleva puesto al agente, y `obsn` sigue siendo la única API: lo que se agregue al CLI
-funciona acá sin tocar el plugin.
+Saving 24 ms does not pay for putting numpy and a 241 MB ONNX model inside the agent's process,
+nor for coupling the plugin version to the index schema. It also means a broken search path
+cannot take the agent down, and `obsn` stays the single API: anything added to the CLI works
+here without touching the plugin.
 
-## Pitfalls que costaron sangre
+The child gets a **minimal environment** (PATH, HOME, TMPDIR, locale, TZ and the `OBS_RAG_*` /
+`XDG_*` variables): provider keys and gateway tokens do not travel to a process that does not
+need them.
 
-- **`obsn edit <path> replace "" <viejo> --file <tmp>`**: el cuerpo va de `--file`, pero
-  `content` tiene que existir como positional (aunque sea vacío) porque `old` es el
-  positional siguiente. Con `--file` primero, argparse se come el viejo como contenido y el
-  reemplazo no ocurre. Está en `tools.py::write` con el comentario.
-- **`OBS_RAG_VAULT` exportado en la shell** apunta todos los tools a otro vault, incluso si
-  el que querés es el default. Lo mismo que ya documenta `bench/gate.sh`.
-- **En un vault de 3 notas** una paráfrasis sin ninguna palabra en común queda debajo del
-  piso semántico y devuelve vacío. Es del motor, no del plugin: en el vault real la misma
-  consulta devuelve 5. Si escribís tests, usá una consulta con un término que exista.
-- **`vault_status` justo después de escribir** puede mostrar el estado anterior: el reindex
-  es asíncrono (~1,5 s de debounce). Esperá unos segundos antes de afirmar que no indexó.
+## Pitfalls that cost blood
 
-## Verificar
+- **`obsn edit <path> replace "" <old> --file <tmp>`**: the body comes from `--file`, but
+  `content` has to exist as a positional (even empty) because `old` is the next positional.
+  With `--file` first, argparse eats the old text as content and the replacement never happens.
+  It is in `tools.py::write` with the comment.
+- **`OBS_RAG_VAULT` exported in the shell** points every tool at another vault, even when you
+  want the default one. Same thing `bench/gate.sh` documents.
+- **In a 3-note vault** a paraphrase with no word in common falls below the semantic floor and
+  returns nothing. That is the engine, not the plugin: in the real vault the same query returns
+  5. If you write tests, use a query with a term that exists.
+- **`vault_status` right after a write** may show the previous state: the reindex is async
+  (~1.5 s debounce). Wait a couple of seconds before claiming it did not index.
+
+## Verify
 
 ```bash
-hermes plugins doctor plugins/obsidian-rag --ci   # manifiesto + registro + drift
-python3 tests/e2e_plugin.py                       # 34 chequeos contra un vault temporal
+hermes plugins doctor plugins/obsidian-rag --ci   # manifest + registration + drift
+python3 tests/e2e_plugin.py                       # 38 checks against a temporary vault
 ```
