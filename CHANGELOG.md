@@ -8,6 +8,8 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-02
+
 ### Changed
 
 - **El motor habla inglés**: toda la salida del CLI pasa a inglés — mensajes de build,
