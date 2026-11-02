@@ -8,6 +8,8 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-02
+
 ### Changed
 
 - **Superficie del plugin en inglés** (`0.3.1`): descripciones de las tools, mensajes de error,
