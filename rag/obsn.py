@@ -29,11 +29,28 @@ import argparse
 import contextlib
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from typing import Any, Sequence
 
 from . import vault
+
+
+def _diagnostico_indice(exc: BaseException, db: object) -> str:
+    """Actionable message for a SQLite error: schema problem vs access problem.
+
+    The old code said "incomplete index, run reindex --force" for EVERY OperationalError.
+    That is right for a missing table and wrong for "unable to open database file": no
+    reindex fixes a permission, a lock or a deleted volume.
+    """
+    texto = str(exc).lower()
+    if "no such table" in texto or "no such column" in texto:
+        return f"incomplete index at {db} ({exc}): run `obsn reindex --force`"
+    return (
+        f"could not read the index at {db} ({exc}): check permissions and that no other "
+        "process is holding it; if the file is corrupt, move it away and run `obsn reindex`"
+    )
 
 
 def _encolar_reindex() -> None:
@@ -42,10 +59,19 @@ def _encolar_reindex() -> None:
     fork+exec of a worker that debounces and coalesces (see rag/reindex_worker.py): the
     user does not pay the ~1.5 s of loading the model. Turn it off with `--no-reindex` or
     with `OBS_RAG_NO_ASYNC=1` (scripts that write in bulk and reindex once).
-    If it cannot be launched, it is not an error: the timer picks it up anyway.
+
+    The dirty marker is written BEFORE spawning. If the write lands after the worker already
+    listed the vault, the marker is still there and the worker runs one more pass; if the
+    spawn fails, the next write (or the systemd timer in contrib/systemd/) picks it up.
     """
     if os.environ.get("OBS_RAG_NO_ASYNC"):
         return
+    try:
+        from .reindex_worker import marcar_sucio
+
+        marcar_sucio()
+    except Exception:  # no fcntl outside POSIX, or a read-only state dir: not fatal
+        pass
     try:
         subprocess.Popen(
             [sys.executable, "-m", "rag.reindex_worker"],
@@ -143,7 +169,6 @@ def cmd_upgrade(args: argparse.Namespace) -> None:
 
 
 def cmd_status(args: argparse.Namespace) -> None:
-    import sqlite3
     import time
     from datetime import datetime, timezone
 
@@ -151,23 +176,26 @@ def cmd_status(args: argparse.Namespace) -> None:
 
     if not config.DB.exists():
         raise SystemExit(f"no index at {config.DB}: run `obsn reindex`")
-    with contextlib.closing(sqlite3.connect(config.DB)) as c:
+    try:
+        conexion = sqlite3.connect(config.DB)
+    except sqlite3.Error as exc:
+        raise SystemExit(_diagnostico_indice(exc, config.DB)) from None
+    with contextlib.closing(conexion) as c:
         # `notes` is the source of truth for what is indexed. Counting distinct paths in
         # `chunks` undercounts: a note with no body (frontmatter only, or <20 chars) produces
         # no chunks and vanished from the total (measured: 193 vs 196 real).
         try:
             notas = c.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
-        except sqlite3.OperationalError as exc:
-            # Index from an older format (no `notes` table) or a file that is not a DB:
-            # without this the user sees an sqlite traceback instead of what to do.
-            raise SystemExit(
-                f"incomplete index at {config.DB} ({exc}): run `obsn reindex --force`"
-            ) from None
-        chunks = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-        con_vec = c.execute("SELECT COUNT(*) FROM chunks WHERE vec IS NOT NULL").fetchone()[0]
-        sin_chunks = c.execute(
-            "SELECT COUNT(*) FROM notes WHERE COALESCE(n_chunks, 0) = 0"
-        ).fetchone()[0]
+            chunks = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            con_vec = c.execute(
+                "SELECT COUNT(*) FROM chunks WHERE vec IS NOT NULL").fetchone()[0]
+            sin_chunks = c.execute(
+                "SELECT COUNT(*) FROM notes WHERE COALESCE(n_chunks, 0) = 0"
+            ).fetchone()[0]
+        except sqlite3.Error as exc:
+            # Old format (no `notes` table) or a file that is not a DB: without this the
+            # user sees an sqlite traceback instead of what to do.
+            raise SystemExit(_diagnostico_indice(exc, config.DB)) from None
         try:
             vigencias = [r[0] for r in c.execute("SELECT stale_after FROM notes")]
         except sqlite3.OperationalError:      # index from before freshness existed
@@ -177,9 +205,22 @@ def cmd_status(args: argparse.Namespace) -> None:
         # failed build from one that never ran. The table is `meta(k, v)`: with invented names
         # the SELECT raises OperationalError and the `except` turns it into "no data".
         try:
-            filas = dict(c.execute("SELECT k, v FROM meta WHERE k IN ('indexado', 'estado')"))
+            filas = dict(c.execute(
+                "SELECT k, v FROM meta WHERE k IN ('indexado', 'estado', 'embedder')"))
         except sqlite3.OperationalError:
             filas = {}
+    # Vectores que faltan: un índice construido sin fastembed los deja en NULL y la
+    # búsqueda cae a TF-IDF sin decirlo. `embedded` ya existía; esto lo hace explícito.
+    faltan_vec = chunks - con_vec
+    embedder = filas.get("embedder")
+    if not embedder:
+        embedder = "ok" if chunks == con_vec else "unknown"
+    try:
+        import importlib.util
+
+        modelo_disponible = importlib.util.find_spec("fastembed") is not None
+    except (ImportError, ValueError):
+        modelo_disponible = False
     indexado = antiguedad = None
     if filas.get("indexado"):
         try:
@@ -218,17 +259,26 @@ def cmd_status(args: argparse.Namespace) -> None:
         "undated": sin_fecha,
         "expiring_7d": por_vencer,
         "model": config.MODELO,
+        "model_available": modelo_disponible,
+        "embedder": embedder,
+        "vectors_missing": faltan_vec,
         "indexed_at": indexado,
         "age_min": antiguedad,
         "state": estado,
     }
+    if faltan_vec:
+        print(
+            f"[warn] {faltan_vec} of {chunks} chunks have no embedding: semantic search is"
+            " off (install fastembed and run `obsn reindex`)",
+            file=sys.stderr, flush=True,
+        )
     if args.json:
         _json(datos)
         return
     print(
         f"notes={datos['notes']} chunks={datos['chunks']} "
         f"embedded={datos['embedded']} without_chunks={datos['without_chunks']} "
-        f"stale={vencidas} undated={sin_fecha} state={estado}\n"
+        f"stale={vencidas} undated={sin_fecha} state={estado} embedder={embedder}\n"
         f"vault={datos['vault']}\nindex={datos['index']}"
     )
     if indexado:
@@ -239,7 +289,6 @@ def cmd_status(args: argparse.Namespace) -> None:
 
 def cmd_stale(args: argparse.Namespace) -> None:
     """List the notes whose `stale_after` has passed. With no index it does not guess: it says so."""
-    import sqlite3
     from datetime import datetime, timezone
 
     from . import config
@@ -249,14 +298,21 @@ def cmd_stale(args: argparse.Namespace) -> None:
         raise SystemExit(f"no index at {config.DB}: run `obsn reindex`")
     ahora = datetime.now(timezone.utc)
     filas: list[dict] = []
-    with contextlib.closing(sqlite3.connect(config.DB)) as c:
+    try:
+        conexion = sqlite3.connect(config.DB)
+    except sqlite3.Error as exc:
+        raise SystemExit(_diagnostico_indice(exc, config.DB)) from None
+    with contextlib.closing(conexion) as c:
         try:
             pares = list(c.execute(
                 "SELECT path, stale_after FROM notes WHERE stale_after IS NOT NULL"))
             total = c.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
-        except sqlite3.OperationalError:
-            raise SystemExit(
-                "the index has no freshness column: run `obsn reindex`") from None
+        except sqlite3.Error as exc:
+            # A missing column is the old index (reindex fixes it); anything else is access.
+            if "no such column" in str(exc).lower() or "no such table" in str(exc).lower():
+                raise SystemExit(
+                    "the index has no freshness column: run `obsn reindex`") from None
+            raise SystemExit(_diagnostico_indice(exc, config.DB)) from None
     for path, iso in pares:
         try:
             vence = datetime.fromisoformat(iso)
@@ -341,10 +397,16 @@ def cmd_list(args: argparse.Namespace) -> None:
 
 
 def cmd_folders(args: argparse.Namespace) -> None:
+    if args.json:
+        _json(vault.folder_counts())
+        return
     print(vault.list_folders())
 
 
 def cmd_tags(args: argparse.Namespace) -> None:
+    if args.json:
+        _json(vault.tag_counts())
+        return
     print(vault.list_tags())
 
 
@@ -459,9 +521,11 @@ def construir_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_list)
 
     p = sub.add_parser("folders", aliases=["list_folders"], help="folders with counts")
+    p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_folders)
 
     p = sub.add_parser("tags", aliases=["list_tags"], help="vault tags")
+    p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_tags)
 
     p = sub.add_parser("meta", aliases=["get_note_metadata"], help="frontmatter, tags, backlinks")

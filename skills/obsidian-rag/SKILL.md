@@ -27,7 +27,7 @@ cd obsidian-rag
 python -m venv .venv && . .venv/bin/activate
 pip install -e .
 obsn status      # ¿hay índice?
-obsn reindex     # construirlo (la primera vez descarga el modelo, ~90 MB)
+obsn reindex     # construirlo (la primera vez descarga el modelo, 241 MB)
 ```
 
 El paquete expone el entrypoint `obsn` (ver `pyproject.toml`). Si preferís un launcher
@@ -59,7 +59,7 @@ intérprete**. `python3` del sistema puede no ser el mismo que el del venv.
 | `obsn delete "ruta.md"` | a `.trash/` (reversible). `--hard --yes` borra de verdad |
 | `obsn move "a.md" "b.md"` | mover o renombrar (no pisa) |
 | `obsn list [carpeta] [--tag T] [--limit N] [--json]` | listar notas |
-| `obsn folders` / `obsn tags` | carpetas y etiquetas con conteo |
+| `obsn folders` / `obsn tags` | carpetas y etiquetas con conteo. `--json` para consumirlos desde código |
 | `obsn meta "ruta.md"` | frontmatter, tags, backlinks, tamaño |
 
 Los nombres largos del estándar MCP son alias de los cortos: `read_note`, `write_note`,

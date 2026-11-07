@@ -177,27 +177,19 @@ def write(args: dict, **kwargs) -> str:
 
 # --- list ---------------------------------------------------------------------------
 
-_COUNTED = re.compile(r"^\s*(\d+)\s+(.*)$")
-
-
-def _counted_rows(text: str, limit: int, key: str) -> list[dict]:
-    rows = []
-    for line in (text or "").splitlines():
-        m = _COUNTED.match(line)
-        if m:
-            rows.append({key: m.group(2).strip(), "count": int(m.group(1))})
-    return rows[:limit]
-
-
 def list_(args: dict, **kwargs) -> str:
     try:
         mode = args.get("mode") or "notes"
         limit = _int(args.get("limit"), 40, 1, 200)
 
+        # folders/tags have --json: parsing the human table with a regex broke silently the
+        # day the columns changed, and that is exactly what the skill forbids.
         if mode == "folders":
-            return _ok(mode=mode, folders=_counted_rows(client.run("folders"), limit, "folder"))
+            rows = client.run("folders", want_json=True)
+            return _ok(mode=mode, folders=rows[:limit])
         if mode == "tags":
-            return _ok(mode=mode, tags=_counted_rows(client.run("tags"), limit, "tag"))
+            rows = client.run("tags", want_json=True)
+            return _ok(mode=mode, tags=rows[:limit])
 
         argv = ["list"]
         if args.get("folder"):

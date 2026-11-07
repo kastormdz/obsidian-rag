@@ -17,7 +17,7 @@ No server and no account: the index is a file. The vault stays as markdown on yo
 ```bash
 git clone https://github.com/kastormdz/obsidian-rag.git
 cd obsidian-rag
-python -m venv .venv && . .venv/bin/activate
+python -m venv .venv && . .venv/bin/activate   # Python 3.11+
 pip install -e .
 ```
 
@@ -101,9 +101,14 @@ obsn graph --broken                 # wikilinks that resolve to nothing
 obsn link --neighbors docker        # notes close to a topic
 obsn link --propose                 # proposes new links, writes nothing
 obsn link --apply                   # writes them into the notes
+obsn link --apply --exclude Privado/Claves   # ...but never that folder
 ```
 
-`link --apply` modifies your notes. Run `--propose` first.
+`link --apply` modifies your notes. Run `--propose` first. It never reads or writes the
+folders in `OBS_RAG_LINK_EXCLUDE` (or `--exclude`, repeatable): the built-in list is
+`03-Personal/Secrets`, `06-Todo`, `05-Archive` and `.obsidian`, because those were the
+sensitive folders of the vault this tool was written on. **Add yours** — the guarantee only
+covers names it knows.
 
 The MCP standard names (`read_note`, `write_note`, `search_notes`, `list_tags` and the rest)
 work as aliases, so an agent does not have to translate anything.
@@ -135,7 +140,8 @@ exact word and want speed.
 ## Freshness
 
 An index that is up to date can still return a note that stopped being true six months ago.
-The index freshness is solved already (content hash, 2-minute timer); this is the other half:
+The index freshness is solved already (content hash plus the timer in `contrib/systemd/`);
+this is the other half:
 a note can declare when it expires.
 
 ```yaml
@@ -229,7 +235,10 @@ warm cache takes 7 s instead of 198.
 
 `obsn status` reports when the index was built (`indexed_at` in ISO, `age_min` in
 minutes) and how many notes it sees. That is what separates a fresh index from a three-day-old
-one when a search misses something it should find.
+one when a search misses something it should find. It also reports `embedder` and
+`vectors_missing`: an index built while fastembed was missing keeps working lexically, and
+`status` says so instead of pretending the semantic half is there. The next `reindex` fills
+the missing vectors by itself.
 
 ## Alongside ovaultd
 
@@ -257,8 +266,21 @@ Neither one will ask you to install the other.
 
 `write`, `edit`, `delete` and `move` trigger a separate reindex: `fork+exec`, a 1.5 s wait to
 group bursts, and a `flock` so two runs cannot step on each other. The command gives you the
-prompt back in about 60 ms. For changes made by another process (your editor, a sync) run a
-periodic `obsn reindex`: a systemd timer every 2 minutes costs 0.2% CPU.
+prompt back in about 60 ms. A write that lands while the build is running leaves a marker, so
+the worker does one more pass instead of losing it.
+
+For changes made by another process (your editor, a sync) install the timer that ships in
+`contrib/systemd/`. It is a user unit, no root, and a no-op build costs ~0.1 s:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp contrib/systemd/obsn-reindex.* ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now obsn-reindex.timer
+```
+
+Edit `OBS_RAG_VAULT` in `obsn-reindex.service` first if your vault is not `~/Obsidian` (a
+systemd unit does not inherit your shell).
 
 Turn it off with `OBS_RAG_NO_ASYNC=1`.
 
@@ -271,6 +293,7 @@ Turn it off with `OBS_RAG_NO_ASYNC=1`.
 | `OBS_RAG_CACHE` | `$XDG_CACHE_HOME/fastembed` | model cache |
 | `OBS_RAG_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | embedding model (see [The embedding model](#the-embedding-model)) |
 | `OBS_RAG_NO_ASYNC` | unset | `1` disables the background reindex |
+| `OBS_RAG_LINK_EXCLUDE` | built-in list | folders `link --apply` never touches, `:`-separated (see [Commands](#commands)) |
 
 ## Upgrade
 
@@ -354,13 +377,15 @@ python -m unittest discover -s tests -t .
 ```
 
 The whole suite runs against temporary vaults: it never touches a real one. There are more
-than ninety today, and the exact number is printed by the command itself.
+than 130 today, and the exact number is printed by the command itself. CI runs it with
+`-W error::ResourceWarning`, so an unclosed SQLite connection is a failure.
 
-The Hermes plugin has its own E2E, which loads it the way Hermes does and exercises all seven
-tools against a temporary vault:
+The CLI has its own E2E (async reindex, delete/move, `--json` contract, exit codes), and the
+Hermes plugin loads the way Hermes does and exercises all seven tools:
 
 ```bash
-python tests/e2e_plugin.py    # 34 checks
+python tests/e2e_cli.py       # 32 checks
+python tests/e2e_plugin.py    # 38 checks
 hermes plugins doctor plugins/obsidian-rag --ci
 ```
 
@@ -368,15 +393,21 @@ To measure retrieval and latency before changing the ranking, the chunker or the
 
 ```bash
 python bench/bench_search.py --verbose
+python bench/bench_search.py --fixture --verbose   # versioned corpus, no vault needed
 python bench/bench_vigencia.py
 python bench/compare_models.py
 ```
 
-Reference numbers from the bench: paraphrases hit top-1 in 4 of 10 cases, top-5 in 5 of 10,
-zero false positives across 8 out-of-domain queries, and top-5 5/5 when the term is exact (4/5
-on top-1). Pure semantic retrieval is the weak spot: a 384-dimension, 12-layer model on CPU does
-not handle a paraphrase with no shared words well. If that matters more to you than speed,
-`bench/compare_models.py` compares alternatives against the index you already have.
+`--fixture` is what `bench/gate.sh` uses: it builds a temporary vault from `bench/fixture/`
+and runs the same cases, so the gate works on a clean machine and in CI. `BENCH_REAL=1 bash
+bench/gate.sh` measures your real index instead.
+
+Reference numbers on the author's vault: paraphrases hit top-1 in 4 of 10 cases, top-5 in 5
+of 10, zero false positives across 8 out-of-domain queries, and top-5 5/5 when the term is
+exact (4/5 on top-1). Pure semantic retrieval is the weak spot: a 384-dimension, 12-layer
+model on CPU does not handle a paraphrase with no shared words well. If that matters more to
+you than speed, `bench/compare_models.py` compares alternatives against the index you already
+have.
 
 ## License
 

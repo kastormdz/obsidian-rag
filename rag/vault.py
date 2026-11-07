@@ -349,20 +349,33 @@ def move_note(from_path: str, to_path: str) -> str:
     return f"moved: {_rel(origen)} -> {_rel(destino)}"
 
 
-def list_folders() -> str:
-    """Folders with their note count, sorted."""
+def folder_counts() -> list[dict[str, Any]]:
+    """Folders with their note count, root as `(root)`.
+
+    A note in `sub/` counts for `sub` AND for every ancestor: the number answers "how many
+    notes live under this folder", which is what someone browsing the vault wants. Root
+    notes used to show up as a separate `.` row while the ancestor was `(root)`: two names
+    for the same folder, and the root count only appeared when there was a subfolder.
+    """
+    raiz = Path(VAULT).resolve()
     conteo: dict[str, int] = {}
     for destino in _recorrer():
-        carpeta = destino.parent.relative_to(VAULT).as_posix()
+        carpeta = destino.parent.relative_to(raiz).as_posix()
+        if carpeta == ".":
+            carpeta = ""
         while True:
             conteo[carpeta] = conteo.get(carpeta, 0) + 1
-            if carpeta in ("", "."):
+            if not carpeta:
                 break
-            carpeta = str(Path(carpeta).parent.as_posix())
+            carpeta = Path(carpeta).parent.as_posix()
             if carpeta == ".":
                 carpeta = ""
-    lineas = [f"{n:5d}  {c or '(root)'}" for c, n in sorted(conteo.items())]
-    return "\n".join(lineas)
+    return [{"folder": c or "(root)", "count": n} for c, n in sorted(conteo.items())]
+
+
+def list_folders() -> str:
+    """Folders with their note count, sorted. Human-readable form of `folder_counts`."""
+    return "\n".join(f"{r['count']:5d}  {r['folder']}" for r in folder_counts())
 
 
 def _tags_frontmatter(texto: str) -> set[str]:
@@ -380,8 +393,12 @@ def _tags_frontmatter(texto: str) -> set[str]:
     }
 
 
-def list_tags() -> str:
-    """Tags from the frontmatter and the body, with their frequency."""
+def tag_counts() -> list[dict[str, Any]]:
+    """Tags from the frontmatter and the body, with their frequency.
+
+    The `#` is kept in the value so the JSON mirrors the human output and the plugin's
+    contract does not change. Ties are broken by name, not by filesystem order.
+    """
     frecuencia: dict[str, int] = {}
     for destino in _recorrer():
         texto = _leer(destino)
@@ -389,7 +406,15 @@ def list_tags() -> str:
         etiquetas |= _tags_del_texto(texto)
         for etiqueta in etiquetas:
             frecuencia[etiqueta] = frecuencia.get(etiqueta, 0) + 1
-    return "\n".join(f"{n:5d}  #{t}" for t, n in sorted(frecuencia.items(), key=lambda p: -p[1]))
+    return [
+        {"tag": f"#{t}", "count": n}
+        for t, n in sorted(frecuencia.items(), key=lambda p: (-p[1], p[0]))
+    ]
+
+
+def list_tags() -> str:
+    """Tags with their frequency. Human-readable form of `tag_counts`."""
+    return "\n".join(f"{r['count']:5d}  {r['tag']}" for r in tag_counts())
 
 
 def get_note_metadata(path: str) -> str:

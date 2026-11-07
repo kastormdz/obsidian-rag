@@ -107,13 +107,19 @@ class Busqueda(unittest.TestCase):
         # un `reindex` incremental: el hash de la nota no cambió, el índice sí.
         idx = self.idx
         c = idx.conn()
-        idx._set_meta(c, "chunker", 999)
-        idx._set_meta(c, "modelo", "modelo-viejo")
-        c.commit()
+        try:
+            idx._set_meta(c, "chunker", 999)
+            idx._set_meta(c, "modelo", "modelo-viejo")
+            c.commit()
+        finally:
+            c.close()
         idx.build(force=False)
         c = idx.conn()
-        self.assertEqual(idx._meta(c, "chunker"), str(idx.CHUNKER_VERSION))
-        self.assertEqual(idx._meta(c, "modelo"), idx.MODELO)
+        try:
+            self.assertEqual(idx._meta(c, "chunker"), str(idx.CHUNKER_VERSION))
+            self.assertEqual(idx._meta(c, "modelo"), idx.MODELO)
+        finally:
+            c.close()
 
 
 NOTAS_VIGENCIA = {

@@ -118,7 +118,10 @@ POSTINGS_VERSION = 1
 
 
 def conn() -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(DB), exist_ok=True)
+    # `dirname` can be empty when someone points OBS_RAG_INDEX at a bare file name:
+    # `os.makedirs("")` raises FileNotFoundError. config resolves DB, but the default keeps
+    # this guard cheap and explicit.
+    os.makedirs(os.path.dirname(DB) or ".", exist_ok=True)
     c = sqlite3.connect(DB, timeout=30)
     # DDL y migraciones sólo la primera vez por proceso y por path: `search()` abre una
     # conexión por consulta, y re-verificar el esquema en cada una costaba 0,33 ms contra
@@ -439,6 +442,69 @@ def _purgar_emb_viejos(c: sqlite3.Connection) -> None:
         print(f"[build] could not compact: {exc}", file=sys.stderr, flush=True)
 
 
+def _normalizar(v) -> bytes:
+    """float32 bytes of the L2-normalized vector: search is one matmul, no per-query norms."""
+    import numpy as np
+
+    norma = float(np.linalg.norm(v)) or 1.0
+    return (v / norma).astype("float32").tobytes()
+
+
+def _faltan_vectores(c: sqlite3.Connection) -> int:
+    return c.execute("SELECT COUNT(*) FROM chunks WHERE vec IS NULL").fetchone()[0]
+
+
+def _modelo_disponible() -> bool:
+    """Is fastembed importable? Cheap check to avoid re-chunking the vault every timer tick."""
+    try:
+        import importlib.util
+
+        return importlib.util.find_spec("fastembed") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _reparar_vectores(c: sqlite3.Connection) -> int:
+    """Embed the chunks that stayed NULL because the index was built without the model.
+
+    The hash of a note does not change when fastembed gets installed, so `build()` skips it
+    and the vectors never come back: the index stays lexical forever without saying so.
+    The index stores offsets, not text, so the note is re-chunked here and the missing
+    vectors are computed (the `emb` cache makes it cheap when they were already seen).
+    """
+    filas = c.execute("SELECT id, path, ord FROM chunks WHERE vec IS NULL").fetchall()
+    if not filas:
+        return 0
+    trozos: dict[str, Optional[list[dict[str, Any]]]] = {}
+    ids: list[int] = []
+    textos: list[str] = []
+    for cid, path, ordinal in filas:
+        if path not in trozos:
+            try:
+                trozos[path] = chunk(leer_nota(os.path.join(VAULT, path)))
+            except OSError:
+                trozos[path] = None
+        chs = trozos[path]
+        if not chs or ordinal is None or ordinal >= len(chs):
+            continue
+        ch = chs[ordinal]
+        ids.append(cid)
+        textos.append(f"{path} :: {ch['heading'] or ''} :: {ch['text']}")
+    if not textos:
+        return 0
+    vectores = embed_all(textos, c)
+    reparados = 0
+    for cid, v in zip(ids, vectores):
+        if v is None:
+            continue
+        c.execute("UPDATE chunks SET vec=? WHERE id=?", (_normalizar(v), cid))
+        reparados += 1
+    c.commit()
+    if reparados:
+        print(f"[build] repaired {reparados} chunks that had no embedding", flush=True)
+    return reparados
+
+
 def embed_all(texts: list[str], c: sqlite3.Connection, model=None) -> list[Optional[Any]]:
     """Embeddings with a per-hash cache (model included) in the emb table.
 
@@ -620,14 +686,7 @@ def _build_con(c: sqlite3.Connection, force: bool) -> None:
                 c.executemany("DELETE FROM postings WHERE chunk=?", [(i2,) for i2 in ids_viejos])
             c.execute("DELETE FROM chunks WHERE path=?", (path,))
             # Vectores NORMALIZADOS: la búsqueda es un solo matmul, sin recalcular normas.
-            import numpy as np
-            empaquetados = []
-            for v in vecs:
-                if v is None:
-                    empaquetados.append(None)
-                else:
-                    norma = float(np.linalg.norm(v)) or 1.0
-                    empaquetados.append((v / norma).astype("float32").tobytes())
+            empaquetados = [_normalizar(v) if v is not None else None for v in vecs]
             filas_postings: list[list[tuple[str, int, int]]] = []
             tuplas = []
             for j, ch in enumerate(chunks):
@@ -670,6 +729,20 @@ def _build_con(c: sqlite3.Connection, force: bool) -> None:
         if i % 10 == 0:
             print(f"  … {i}/{len(changed)}", flush=True)
 
+    # Un índice construido sin fastembed deja los vectores en NULL. El hash de la nota no
+    # cambia cuando el modelo aparece, así que sin esta reparación `build()` la saltea para
+    # siempre y la búsqueda queda léxica sin avisar. Sólo se paga cuando hay algo que faltar.
+    sin_vec = _faltan_vectores(c)
+    if sin_vec:
+        if _modelo_disponible():
+            print(f"[build] {sin_vec} chunks without embeddings: trying to repair", flush=True)
+            _reparar_vectores(c)
+        else:
+            # Sin fastembed no hay nada que reparar y re-trocear el vault en cada corrida
+            # del timer sería pagar el costo sin la posibilidad de arreglarlo.
+            print(f"[build] {sin_vec} chunks without embeddings: fastembed is not installed",
+                  flush=True)
+
     # df (document frequency para TF-IDF). Recalcularlo recorre TODOS los chunks y los
     # tokeniza: ~100 ms. Si no cambió ninguna nota, el df viejo sigue siendo correcto.
     if changed or stale or not c.execute("SELECT COUNT(*) FROM df").fetchone()[0]:
@@ -682,6 +755,17 @@ def _build_con(c: sqlite3.Connection, force: bool) -> None:
     total = c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
     withvec = c.execute("SELECT COUNT(*) FROM chunks WHERE vec IS NOT NULL").fetchone()[0]
     print(f"[build] done: {len(notes)} notes, {total} chunks ({withvec} with embeddings)", flush=True)
+    # `embedder` es el estado honesto del índice: `status` y cualquier consumidor pueden
+    # distinguir "sin vectores porque fastembed no está" de "sin vectores porque no hay
+    # notas". Se escribe aunque el build termine en `failed`, que es cuando más se mira.
+    _set_meta(c, "embedder", "ok" if withvec == total else "missing")
+    c.commit()
+    if withvec < total:
+        print(
+            f"[build] WARNING: {total - withvec} of {total} chunks have no embedding:"
+            " semantic search is off. Install fastembed and run `obsn reindex`",
+            file=sys.stderr, flush=True,
+        )
     if failed:
         print(f"[build] failed: {len(failed)} -> {failed[:5]}", flush=True)
 
@@ -770,37 +854,77 @@ def _penalizar(
     return score, vencida, iso
 
 
-def _con_texto(c: sqlite3.Connection, elegidos: list[dict]) -> list[dict]:
+def _con_texto(c: sqlite3.Connection, elegidos: list[dict], query: str = "") -> list[dict]:
     """Add the text to the k winners and clear the internal fields.
 
     The text is re-read from the vault for at most k notes, not for the whole vault. Lines
     are cached per note: several winning chunks from the same note reopened and re-split the
     same file once per chunk.
+
+    The note hash is checked before trusting the line range. If the note changed since the
+    build, those offsets point somewhere else: the text shown would not be the chunk that
+    was scored. In that case the note is re-chunked and the chunk with the same heading and
+    the most query terms wins, and the hit is flagged `index_stale`.
     """
     ids = [r["_id"] for r in elegidos]
-    rangos = {r[0]: (r[1], r[2], r[3]) for r in c.execute(
-        f"SELECT id, path, off_start, off_end FROM chunks"
-        f" WHERE id IN ({','.join('?' * len(ids))})", ids
-    )} if ids else {}
+    filas = c.execute(
+        f"SELECT c.id, c.path, c.off_start, c.off_end, c.ord, c.heading, n.hash"
+        f" FROM chunks c LEFT JOIN notes n ON n.path = c.path"
+        f" WHERE c.id IN ({','.join('?' * len(ids))})", ids
+    ).fetchall() if ids else []
+    rangos = {f[0]: f[1:] for f in filas}
+    terminos = set(tok(query))
+    textos: dict[str, str] = {}
     lineas_por_nota: dict[str, list[str]] = {}
+    recortes: dict[str, list[dict[str, Any]]] = {}
 
-    def texto_de(path: str, ini: int | None, fin: int | None) -> str:
+    def texto_de(path: str, ini: int | None, fin: int | None, ordinal: int | None,
+                 heading: str | None, hash_idx: str | None) -> tuple[str, bool]:
         if not path or ini is None or fin is None:
-            return ""
-        if path not in lineas_por_nota:
+            return "", False
+        if path not in textos:
             try:
-                lineas_por_nota[path] = leer_nota(os.path.join(VAULT, path)).split("\n")
+                textos[path] = leer_nota(os.path.join(VAULT, path))
             except OSError:
-                lineas_por_nota[path] = []
-        lineas = lineas_por_nota[path]
-        return "\n".join(lineas[ini:fin + 1]).strip()
+                textos[path] = ""
+        actual = textos[path]
+        if not actual:
+            return "", False
+        desfasado = bool(hash_idx) and (
+            hashlib.sha1(actual.encode("utf-8", "replace")).hexdigest() != hash_idx
+        )
+        if desfasado:
+            if path not in recortes:
+                recortes[path] = chunk(actual)
+            candidatos = recortes[path]
+            if not candidatos:
+                return "", True
+            if not terminos:      # sin consulta no hay señal para elegir: offsets de siempre
+                if path not in lineas_por_nota:
+                    lineas_por_nota[path] = actual.split("\n")
+                return "\n".join(lineas_por_nota[path][ini:fin + 1]).strip(), True
+
+            def puntaje(par: tuple[int, dict[str, Any]]) -> tuple[bool, int, int]:
+                i, ch = par
+                solape = len(terminos & set(tok(ch["text"])))
+                misma = (ch["heading"] or "") == (heading or "")
+                return misma, solape, -abs(i - (ordinal or 0))
+
+            mejor = max(enumerate(candidatos), key=puntaje)[1]
+            return mejor["text"], True
+        if path not in lineas_por_nota:
+            lineas_por_nota[path] = actual.split("\n")
+        return "\n".join(lineas_por_nota[path][ini:fin + 1]).strip(), False
 
     for r in elegidos:
         cid = r.pop("_id")
         r.pop("_cob", None)
         r.pop("_nota", None)
-        path, ini, fin = rangos.get(cid, ("", None, None))
-        r["text"] = texto_de(path, ini, fin)
+        path, ini, fin, ordinal, heading, hash_idx = rangos.get(
+            cid, ("", None, None, None, None, None))
+        r["text"], desfasado = texto_de(path, ini, fin, ordinal, heading, hash_idx)
+        if desfasado:
+            r["index_stale"] = True
     return elegidos
 
 
@@ -913,7 +1037,7 @@ def _buscar_con(c: sqlite3.Connection, query: str, k: int, alpha: float,
                             "chunk_type": ct, "score": score, "sem": None, "_id": cid,
                             "stale": vencida, "stale_after": iso})
         out_lex.sort(key=lambda r: -r["score"])
-        return _con_texto(c, out_lex[:k])
+        return _con_texto(c, out_lex[:k], query)
 
     # ── Señal semántica: un matmul, sin traer el texto de todo el vault
     import numpy as np
@@ -940,7 +1064,7 @@ def _buscar_con(c: sqlite3.Connection, query: str, k: int, alpha: float,
             elegidos.append({"_id": r[1], "path": r[2], "ord": r[3], "heading": r[4],
                              "chunk_type": r[6], "score": score,
                              "stale": vencida, "stale_after": iso})
-        return _con_texto(c, elegidos)
+        return _con_texto(c, elegidos, query)
     try:
         mat = np.frombuffer(b"".join(r[6] for r in filas), dtype=np.float32).reshape(len(filas), -1)
     except ValueError as exc:
@@ -1015,7 +1139,7 @@ def _buscar_con(c: sqlite3.Connection, query: str, k: int, alpha: float,
 
     # El texto se lee SÓLO para los k ganadores: el índice no lo necesita para
     # puntuar, así que la búsqueda no arrastra los 3 MB del vault a memoria.
-    return _con_texto(c, elegidos)
+    return _con_texto(c, elegidos, query)
 
 
 _MODEL_HOLDER = [None]

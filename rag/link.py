@@ -18,17 +18,20 @@ DESIGN
   is in 30 links someone reads and thinks "yes, that makes sense".
 - It distinguishes "neighbor" (shared topic) from "correction" (the other note is more
   canonical about the same subject) — the second category is the most useful.
-- It NEVER touches `Secrets/` or `06-Todo/`: those are credentials and to-dos.
+- It NEVER touches the excluded folders (built-in: `03-Personal/Secrets`, `06-Todo`,
+  `05-Archive`, `.obsidian`). Those names belong to the vault this tool was born in: add
+  yours with `OBS_RAG_LINK_EXCLUDE=dir1:dir2` or with `--exclude DIR`.
 - Propose first, apply later. It never writes without an explicit `--apply`.
 
 USAGE
 ─────
-  python3 obsidian-link.py                       # general report
-  python3 obsidian-link.py --neighbors keycloak  # neighbors of a topic
-  python3 obsidian-link.py --propose             # suggested links, touches nothing
-  python3 obsidian-link.py --apply               # writes the links into the vault
-  python3 obsidian-link.py --apply --max 30      # up to 30 (default 50)
-  python3 obsidian-link.py --canonical           # detects duplicate subjects
+  obsn link                                     # general report
+  obsn link --neighbors keycloak                # neighbors of a topic
+  obsn link --propose                           # suggested links, touches nothing
+  obsn link --apply                             # writes the links into the vault
+  obsn link --apply --max 30                    # up to 30 (default 50)
+  obsn link --apply --exclude Privado/Claves    # never that folder
+  obsn link --canonical                         # detects duplicate subjects
 """
 from __future__ import annotations
 
@@ -37,16 +40,39 @@ import os
 import re
 import sys
 from collections import defaultdict
-from pathlib import Path
+from collections.abc import Iterable
 
 from .config import DB as _CONFIG_DB
 
 DB = str(_CONFIG_DB)
 
-# Carpetas fuera de alcance: credenciales y lista de cosas por hacer.
+# Carpetas fuera de alcance: credenciales y lista de cosas por hacer. Estos nombres son
+# los del vault donde nació la herramienta: para cualquier otro vault hay que sumar los
+# propios con OBS_RAG_LINK_EXCLUDE=dir1:dir2 o con `--exclude DIR` (repetible). Sin esa
+# configuración la garantía "no toca credenciales" no existe.
 EXCLUIR_DIRS = ("03-Personal/Secrets", "06-Todo", "05-Archive", ".obsidian")
 # No proponer links hacia/desde estas: son índices, no contenido.
 NO_ENLACAR = ("00-INDEX.md",)
+
+
+def _excluidos(extra: Iterable[str] = ()) -> tuple[str, ...]:
+    """Folders never read or written, in order and without duplicates.
+
+    The environment variable is additive on purpose: setting it must not silently drop the
+    built-in protection. `os.pathsep` (`:` on Linux/macOS) is the separator, the same one
+    PATH uses.
+    """
+    del_entorno = [
+        p.strip() for p in os.environ.get("OBS_RAG_LINK_EXCLUDE", "").split(os.pathsep)
+        if p.strip()
+    ]
+    vistos: dict[str, None] = {}
+    for crudo in (*EXCLUIR_DIRS, *del_entorno, *extra):
+        limpio = str(crudo).strip().strip("/")
+        if limpio:
+            vistos[limpio] = None
+    return tuple(vistos)
+
 
 WIKILINK = re.compile(r"\[\[([^\]|#]+)")
 
@@ -58,13 +84,14 @@ def cargando_indice():
     return motor
 
 
-def notas_filtradas() -> list[str]:
+def notas_filtradas(excluir: Iterable[str] | None = None) -> list[str]:
     import sqlite3
+
+    fuera = tuple(excluir) if excluir is not None else _excluidos()
     c = sqlite3.connect(DB)
     rows = [r[0] for r in c.execute("SELECT path FROM notes ORDER BY path")]
     c.close()
-    return [p for p in rows
-            if not p.startswith(EXCLUIR_DIRS) and p not in NO_ENLACAR]
+    return [p for p in rows if not p.startswith(fuera) and p not in NO_ENLACAR]
 
 
 def vec_por_nota() -> dict[str, "object"]:
@@ -214,12 +241,16 @@ def main() -> None:
     ap.add_argument("--max", type=int, default=50, help="maximum notes to touch")
     ap.add_argument("--canonical", action="store_true", help="detect duplicate subjects")
     ap.add_argument("--canonical-threshold", type=float, default=0.80)
+    ap.add_argument("--exclude", action="append", default=[], metavar="DIR",
+                    help="folder to never read or write (repeatable; adds to "
+                         "OBS_RAG_LINK_EXCLUDE)")
     a = ap.parse_args()
 
     if not os.path.exists(DB):
         sys.exit("obsidian-link: no index. Run: obsn reindex")
+    excluir = _excluidos(a.exclude)
     oi = cargando_indice()
-    notas = set(notas_filtradas())
+    notas = set(notas_filtradas(excluir))
     vecs_all = vec_por_nota()
     vecs = {p: v for p, v in vecs_all.items() if p in notas}
     cur = enlaces_actuales()
@@ -252,7 +283,9 @@ def main() -> None:
     vec = vecinos(vecs, cur, a.min_score, top_k=4)
     total_links = sum(len(v) for v in vec.values())
     print(f"\n─── LINK PROPOSALS (similarity >= {a.min_score}) ───")
-    print(f"  {len(vec)} notes would gain links · {total_links} suggested links\n")
+    print(f"  {len(vec)} notes would gain links · {total_links} suggested links")
+    print(f"  excluded: {', '.join(excluir)}")
+    print("  (add folders with --exclude DIR or OBS_RAG_LINK_EXCLUDE=dir1:dir2)\n")
     if not vec:
         print("  (nothing to propose at that threshold — try --min-score 0.55)")
         return

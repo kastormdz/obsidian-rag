@@ -18,7 +18,7 @@ disco.
 ```bash
 git clone https://github.com/kastormdz/obsidian-rag.git
 cd obsidian-rag
-python -m venv .venv && . .venv/bin/activate
+python -m venv .venv && . .venv/bin/activate   # Python 3.11+
 pip install -e .
 ```
 
@@ -103,9 +103,14 @@ obsn graph --broken                 # wikilinks que no resuelven
 obsn link --neighbors docker        # notas parecidas a un tema
 obsn link --propose                 # propone links nuevos, no escribe
 obsn link --apply                   # los escribe en las notas
+obsn link --apply --exclude Privado/Claves   # ...pero nunca en esa carpeta
 ```
 
-`link --apply` modifica tus notas. Corré `--propose` primero.
+`link --apply` modifica tus notas. Corré `--propose` primero. Nunca lee ni escribe las carpetas
+de `OBS_RAG_LINK_EXCLUDE` (o `--exclude`, repetible): la lista incluida es
+`03-Personal/Secrets`, `06-Todo`, `05-Archive` y `.obsidian`, porque esas eran las carpetas
+sensibles del vault donde nació la herramienta. **Agregá las tuyas**: la garantía sólo cubre
+los nombres que conoce.
 
 Los nombres del estándar MCP (`read_note`, `write_note`, `search_notes`, `list_tags` y el
 resto) funcionan como alias, así un agente no tiene que traducir nada.
@@ -137,7 +142,8 @@ exacta y querés velocidad.
 ## Vigencia
 
 Un índice al día puede devolver una nota que dejó de ser cierta hace seis meses. La frescura
-del índice ya está resuelta (hash del contenido, timer de 2 minutos); esto es la otra mitad:
+del índice ya está resuelta (hash del contenido más el timer de `contrib/systemd/`);
+esto es la otra mitad:
 la nota declara cuándo vence.
 
 ```yaml
@@ -230,7 +236,10 @@ caché caliente tarda 7 s en vez de 198.
 
 `obsn status` reporta cuándo se construyó el índice (`indexed_at` en ISO, `age_min` en
 minutos) y cuántas notas ve. Eso es lo que separa un índice fresco de uno de hace tres días
-cuando una búsqueda no encuentra algo que debería.
+cuando una búsqueda no encuentra algo que debería. También reporta `embedder` y
+`vectors_missing`: un índice construido sin fastembed sigue funcionando en modo léxico, y
+`status` lo dice en vez de fingir que la mitad semántica está. El siguiente `reindex` rellena
+solo los vectores que faltan.
 
 ## Con ovaultd
 
@@ -257,8 +266,21 @@ Ninguno de los dos te va a pedir que instales el otro.
 
 `write`, `edit`, `delete` y `move` disparan un reindex aparte: `fork+exec`, 1,5 s de espera
 para agrupar ráfagas y un `flock` para que dos corridas no se pisen. El comando te devuelve
-el control en ~60 ms. Para lo que cambia otro proceso (tu editor, un sync) conviene un
-`obsn reindex` periódico: un timer de systemd cada 2 minutos cuesta 0,2% de CPU.
+el control en ~60 ms. Una escritura que llega mientras corre el build deja una marca, así el
+worker hace una pasada más en vez de perderla.
+
+Para lo que cambia otro proceso (tu editor, un sync) instalá el timer que viene en
+`contrib/systemd/`. Es una unidad de usuario, sin root, y un build sin cambios cuesta ~0,1 s:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp contrib/systemd/obsn-reindex.* ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now obsn-reindex.timer
+```
+
+Editá `OBS_RAG_VAULT` en `obsn-reindex.service` si tu vault no está en `~/Obsidian` (una
+unidad de systemd no hereda tu shell).
 
 Se apaga con `OBS_RAG_NO_ASYNC=1`.
 
@@ -271,6 +293,7 @@ Se apaga con `OBS_RAG_NO_ASYNC=1`.
 | `OBS_RAG_CACHE` | `$XDG_CACHE_HOME/fastembed` | caché del modelo |
 | `OBS_RAG_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | modelo de embeddings (ver [El modelo de embeddings](#el-modelo-de-embeddings)) |
 | `OBS_RAG_NO_ASYNC` | sin definir | `1` apaga el reindex en segundo plano |
+| `OBS_RAG_LINK_EXCLUDE` | lista incluida | carpetas que `link --apply` nunca toca, separadas por `:` (ver [Comandos](#comandos)) |
 
 ## Actualizar
 
@@ -355,13 +378,15 @@ python -m unittest discover -s tests -t .
 ```
 
 Toda la suite corre contra vaults temporales: no tocan ningún vault real. Hoy son más de
-noventa, y el número exacto lo imprime el propio comando.
+130, y el número exacto lo imprime el propio comando. El CI la corre con
+`-W error::ResourceWarning`: una conexión SQLite sin cerrar es un fallo.
 
-El plugin de Hermes tiene su propio E2E, que lo carga como lo hace Hermes y ejercita los
-siete tools contra un vault temporal:
+El CLI tiene su propio E2E (reindex async, delete/move, contrato `--json`, códigos de salida),
+y el plugin de Hermes se carga como lo hace Hermes y ejercita los siete tools:
 
 ```bash
-python tests/e2e_plugin.py    # 34 chequeos
+python tests/e2e_cli.py       # 32 chequeos
+python tests/e2e_plugin.py    # 38 chequeos
 hermes plugins doctor plugins/obsidian-rag --ci
 ```
 
@@ -369,16 +394,21 @@ Para medir recuperación y latencia antes de tocar el ranking, el chunker o el m
 
 ```bash
 python bench/bench_search.py --verbose
+python bench/bench_search.py --fixture --verbose   # corpus versionado, sin vault
 python bench/bench_vigencia.py
 python bench/compare_models.py
 ```
 
-Números de referencia del banco: top-1 en paráfrasis 4/10, top-5 5/10, cero falsos positivos
-en 8 consultas fuera de dominio, y top-5 5/5 cuando el término es exacto (4/5 en top-1). La
-recuperación puramente semántica es lo más flojo del conjunto: un modelo de 384 dimensiones
-y 12 capas en CPU no resuelve bien una paráfrasis sin ninguna palabra en común. Si eso te
-importa más que la velocidad, `bench/compare_models.py` compara alternativas sobre el índice
-ya armado.
+`--fixture` es lo que usa `bench/gate.sh`: arma un vault temporal desde `bench/fixture/` y
+corre los mismos casos, así el gate funciona en una máquina limpia y en CI. Con `BENCH_REAL=1
+bash bench/gate.sh` medís tu índice real.
+
+Números de referencia sobre el vault del autor: top-1 en paráfrasis 4/10, top-5 5/10, cero
+falsos positivos en 8 consultas fuera de dominio, y top-5 5/5 cuando el término es exacto
+(4/5 en top-1). La recuperación puramente semántica es lo más flojo del conjunto: un modelo
+de 384 dimensiones y 12 capas en CPU no resuelve bien una paráfrasis sin ninguna palabra en
+común. Si eso te importa más que la velocidad, `bench/compare_models.py` compara alternativas
+sobre el índice ya armado.
 
 ## Licencia
 

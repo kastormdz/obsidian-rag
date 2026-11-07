@@ -52,6 +52,30 @@ class Worker(unittest.TestCase):
         self.assertTrue(log.exists())
         self.assertIn("reindex async", log.read_text(encoding="utf-8"))
 
+    def test_repite_la_pasada_si_llego_una_escritura_durante_el_build(self) -> None:
+        # El hueco: el worker lista el vault, el build tarda, y una escritura que llega
+        # mientras tanto se perdía hasta el próximo write. La marca dirty pide otra pasada.
+        from rag import index, reindex_worker
+
+        llamadas = []
+
+        def build(force=False):
+            llamadas.append(1)
+            if len(llamadas) == 1:
+                reindex_worker.marcar_sucio()
+
+        with mock.patch.object(index, "build", side_effect=build):
+            self.assertEqual(reindex_worker.main(), 0)
+        self.assertEqual(len(llamadas), 2, "la segunda pasada no corrió")
+
+    def test_la_marca_no_queda_para_el_proximo_worker(self) -> None:
+        from rag import index, reindex_worker
+
+        reindex_worker.marcar_sucio()
+        with mock.patch.object(index, "build", return_value=None):
+            reindex_worker.main()
+        self.assertFalse(reindex_worker.marca_sucia().exists())
+
 
 if __name__ == "__main__":
     unittest.main()

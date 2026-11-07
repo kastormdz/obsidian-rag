@@ -7,6 +7,7 @@ el commit de la nota 10 y sus chunks desaparecían del índice hasta el próximo
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import sqlite3
 import tempfile
@@ -17,6 +18,15 @@ NOTAS = {
     "buena.md": "# Buena\n\nServicio de docker compose con volúmenes persistentes.\n",
     "mala.md": "# Mala\n\nNota que después se rompe a propósito.\n",
 }
+
+
+def conexion(db):
+    """`with sqlite3.connect(db)` commits but does NOT close (ResourceWarning).
+
+    The production code fixed this in `index._conexion`; the tests were still leaking one
+    connection per query.
+    """
+    return contextlib.closing(sqlite3.connect(db))
 
 
 class BuildTransaccional(unittest.TestCase):
@@ -39,7 +49,7 @@ class BuildTransaccional(unittest.TestCase):
         idx.build(force=True)
         # Marcar el índice invertido como al día: si no, el segundo build corre la
         # migración de postings y el fallo inyectado abajo saltaría fuera del savepoint.
-        with sqlite3.connect(idx.DB) as c:
+        with conexion(idx.DB) as c:
             idx._set_meta(c, "postings", idx.POSTINGS_VERSION)
             c.commit()
 
@@ -51,7 +61,7 @@ class BuildTransaccional(unittest.TestCase):
 
     def _chunks(self, path: str) -> list[str]:
         """Reconstruye el texto de cada chunk desde el vault (el índice guarda offsets)."""
-        with sqlite3.connect(self.idx.DB) as c:
+        with conexion(self.idx.DB) as c:
             rangos = list(c.execute(
                 "SELECT off_start, off_end FROM chunks WHERE path=? ORDER BY ord", (path,)
             ))
@@ -81,7 +91,7 @@ class BuildTransaccional(unittest.TestCase):
             self.idx._fila_postings = original
 
         # La que falló conserva su fila y sus chunks: el rollback deshace el DELETE.
-        with sqlite3.connect(self.idx.DB) as c:
+        with conexion(self.idx.DB) as c:
             hash_mala = c.execute("SELECT hash FROM notes WHERE path='mala.md'").fetchone()[0]
             n_mala = c.execute("SELECT COUNT(*) FROM chunks WHERE path='mala.md'").fetchone()[0]
         nuevo_mala = hashlib.sha1(
@@ -95,7 +105,7 @@ class BuildTransaccional(unittest.TestCase):
 
     def _n_chunks(self, path: str) -> int:
         """Cuenta chunks en la DB (sirve aunque la nota ya no exista en disco)."""
-        with sqlite3.connect(self.idx.DB) as c:
+        with conexion(self.idx.DB) as c:
             return c.execute("SELECT COUNT(*) FROM chunks WHERE path=?", (path,)).fetchone()[0]
 
     def test_no_vacia_el_indice_si_el_vault_no_existe(self) -> None:
@@ -140,6 +150,36 @@ class ErroresDeCli(unittest.TestCase):
                 config.DB = previo
         self.assertIn("reindex", str(ctx.exception))
 
+    def test_diagnostico_distingue_esquema_de_acceso(self) -> None:
+        from rag import obsn
+
+        esquema = obsn._diagnostico_indice(
+            sqlite3.OperationalError("no such table: notes"), "/x.db")
+        self.assertIn("incomplete index", esquema)
+        self.assertIn("reindex --force", esquema)
+
+        acceso = obsn._diagnostico_indice(
+            sqlite3.OperationalError("unable to open database file"), "/x.db")
+        self.assertIn("could not read", acceso)
+        self.assertIn("permissions", acceso)
+
+    def test_status_con_archivo_que_no_es_db_no_manda_a_reindexar(self) -> None:
+        # "reindex --force" no arregla un archivo corrupto ni un permiso: el mensaje tiene
+        # que decir qué pasó de verdad.
+        from rag import config, obsn
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "no.db"
+            db.write_text("esto no es sqlite", encoding="utf-8")
+            previo = config.DB
+            config.DB = db
+            try:
+                with self.assertRaises(SystemExit) as ctx:
+                    obsn.cmd_status(argparse.Namespace(json=False))
+            finally:
+                config.DB = previo
+        self.assertIn("could not read", str(ctx.exception))
+
     def test_status_expone_cuando_se_indexo(self) -> None:
         import contextlib
         import io
@@ -173,6 +213,10 @@ class ErroresDeCli(unittest.TestCase):
         datos = json.loads(salida.getvalue())
         self.assertGreaterEqual(datos["age_min"], 59)
         self.assertRegex(datos["indexed_at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$")
+        # Lo nuevo: se ve si al índice le faltan vectores, en vez de deducirlo de `embedded`.
+        self.assertEqual(datos["vectors_missing"], 0)
+        self.assertEqual(datos["embedder"], "ok")
+        self.assertIsInstance(datos["model_available"], bool)
 
     def test_list_limit_negativo_se_rechaza(self) -> None:
         from rag import obsn
@@ -180,6 +224,37 @@ class ErroresDeCli(unittest.TestCase):
         args = argparse.Namespace(limit=-1, folder=None, tag=None, json=False)
         with self.assertRaises(SystemExit):
             obsn.cmd_list(args)
+
+    def test_folders_y_tags_emiten_json(self) -> None:
+        # El plugin dejó de parsear la tabla humana: estos dos comandos son su contrato.
+        import contextlib
+        import io
+        import json
+
+        from rag import obsn, vault as vault_mod
+
+        with tempfile.TemporaryDirectory() as tmp:
+            raiz = Path(tmp)
+            (raiz / "A").mkdir()
+            (raiz / "A" / "uno.md").write_text(
+                "---\ntags: [alfa]\n---\n# Uno\n", encoding="utf-8")
+            (raiz / "dos.md").write_text("# Dos\n\n#beta\n", encoding="utf-8")
+            previo = vault_mod.VAULT
+            vault_mod.VAULT = raiz
+            try:
+                for comando, clave in (("folders", "folder"), ("tags", "tag")):
+                    salida = io.StringIO()
+                    with contextlib.redirect_stdout(salida):
+                        self.assertEqual(obsn.main([comando, "--json"]), 0)
+                    datos = json.loads(salida.getvalue())
+                    self.assertIsInstance(datos, list)
+                    self.assertTrue(datos, comando)
+                    self.assertTrue(
+                        all(clave in fila and isinstance(fila["count"], int) for fila in datos),
+                        datos,
+                    )
+            finally:
+                vault_mod.VAULT = previo
 
     def test_graph_y_link_aceptan_sus_propios_flags(self) -> None:
         # `--stats` no está declarado en el parser de obsn: lo valida graph.main(). Antes,
@@ -241,7 +316,7 @@ class VigenciaEnElIndice(unittest.TestCase):
 
     def test_guarda_la_vigencia_y_deja_null_si_no_hay_fecha(self) -> None:
         self.idx.build(force=True)
-        with sqlite3.connect(self.idx.DB) as c:
+        with conexion(self.idx.DB) as c:
             con = c.execute(
                 "SELECT stale_after, updated FROM notes WHERE path='con-fecha.md'"
             ).fetchone()
@@ -258,7 +333,7 @@ class VigenciaEnElIndice(unittest.TestCase):
 
     def test_migra_un_esquema_viejo_y_lo_rellena(self) -> None:
         # DB con el esquema anterior a esta feature
-        with sqlite3.connect(self.idx.DB) as c:
+        with conexion(self.idx.DB) as c:
             c.execute(
                 "CREATE TABLE notes (path TEXT PRIMARY KEY, mtime REAL, size INTEGER,"
                 " hash TEXT, n_chunks INTEGER, indexed_at REAL)"
@@ -266,7 +341,7 @@ class VigenciaEnElIndice(unittest.TestCase):
             c.execute("INSERT INTO notes VALUES ('con-fecha.md', 0, 1, 'h', 1, 0)")
             c.commit()
         self.idx.build(force=False)  # conecta => migra y fuerza rebuild por la meta
-        with sqlite3.connect(self.idx.DB) as c:
+        with conexion(self.idx.DB) as c:
             cols = {r[1] for r in c.execute("PRAGMA table_info(notes)")}
             fila = c.execute(
                 "SELECT stale_after FROM notes WHERE path='con-fecha.md'"

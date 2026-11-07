@@ -13,7 +13,6 @@ Sale 1 si falla cualquier par (así lo puede usar el gate).
 from __future__ import annotations
 
 import json
-import os
 import pathlib
 import statistics
 import sys

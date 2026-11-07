@@ -33,12 +33,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
 
+      # ResourceWarning como error: una conexión sqlite sin cerrar es una fuga, no ruido.
       - name: Tests unitarios
-        run: python -m unittest discover -s tests -t .
+        run: python -W error::ResourceWarning -m unittest discover -s tests -t .
 
-      # El E2E construye un vault temporal, y construir exige embeddings: baja el modelo
-      # (~240 MB). Se cachea por hash de config.py, que es donde vive el nombre del modelo,
-      # y corre en una sola versión de Python para no pagarlo dos veces.
+      # Los dos E2E construyen un vault temporal y construir exige embeddings: baja el
+      # modelo (~240 MB). Se cachea por hash de config.py, que es donde vive el nombre del
+      # modelo, y corre en una sola versión de Python para no pagarlo tres veces.
       - name: Cache del modelo
         if: matrix.python == '3.12'
         uses: actions/cache@v4
@@ -46,6 +47,12 @@ jobs:
           path: ~/.cache/fastembed
           key: fastembed-${{ runner.os }}-${{ hashFiles('rag/config.py') }}
 
-      - name: E2E del plugin (vault temporal, 30 chequeos)
+      # El E2E del CLI es el que cubre la integración obsn–worker–SQLite (async reindex,
+      # delete/move, contrato --json, códigos de salida): tiene que correr acá, no sólo a mano.
+      - name: E2E del CLI (vault temporal, 32 chequeos)
+        if: matrix.python == '3.12'
+        run: python tests/e2e_cli.py
+
+      - name: E2E del plugin (vault temporal, 38 chequeos)
         if: matrix.python == '3.12'
         run: python tests/e2e_plugin.py

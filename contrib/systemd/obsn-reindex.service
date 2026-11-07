@@ -1,0 +1,24 @@
+# Incremental reindex of the vault, for changes made OUTSIDE obsn (an editor, a sync).
+# obsn's own writes already trigger the background worker; this timer is the safety net.
+#
+# Install (user units, no root):
+#   mkdir -p ~/.config/systemd/user
+#   cp contrib/systemd/obsn-reindex.* ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now obsn-reindex.timer
+#
+# Adjust OBS_RAG_VAULT (and OBS_RAG_INDEX if you use a non-default index). A systemd unit
+# does not inherit your shell: the variables have to be here.
+[Unit]
+Description=obsidian-rag incremental reindex
+Documentation=https://github.com/kastormdz/obsidian-rag
+After=default.target
+
+[Service]
+Type=oneshot
+# Change this if obsn lives somewhere else (pipx, /usr/local/bin, a venv's bin/).
+ExecStart=%h/.local/bin/obsn reindex
+Environment=OBS_RAG_VAULT=%h/Obsidian
+# Environment=OBS_RAG_INDEX=%h/.local/share/obsidian-rag/index.db
+Nice=10
+IOSchedulingClass=idle

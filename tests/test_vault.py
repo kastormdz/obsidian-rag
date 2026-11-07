@@ -48,6 +48,21 @@ class VaultTemporal(unittest.TestCase):
         self.assertIn("A", salida)
         self.assertIn("B", salida)
 
+    def test_folder_counts_es_json_y_no_duplica_el_root(self) -> None:
+        (self.raiz / "suelta.md").write_text("# Suelta\n", encoding="utf-8")
+        datos = vault.folder_counts()
+        conteo = {r["folder"]: r["count"] for r in datos}
+        self.assertEqual(conteo, {"(root)": 3, "A": 1, "B": 1})
+        self.assertNotIn(".", conteo, "el root tenía dos nombres: '.' y '(root)'")
+
+    def test_tag_counts_es_json_y_ordena_por_uso(self) -> None:
+        (self.raiz / "A" / "otra.md").write_text("# Otra\n\n#beta y #zeta\n", encoding="utf-8")
+        datos = vault.tag_counts()
+        conteo = {r["tag"]: r["count"] for r in datos}
+        self.assertEqual(conteo["#beta"], 2)
+        self.assertEqual(conteo["#alfa"], 1)
+        self.assertEqual([r["count"] for r in datos], sorted((r["count"] for r in datos), reverse=True))
+
     def test_tags_incluye_frontmatter(self) -> None:
         self.assertIn("#alfa", vault.list_tags())
 

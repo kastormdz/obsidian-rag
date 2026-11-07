@@ -1,5 +1,9 @@
 # Correctitud y rendimiento del RAG — plan de implementación
 
+> **Documento histórico (2026-10-24).** Se conserva como registro del plan. El estado vigente
+> está en [CHANGELOG.md](../../CHANGELOG.md): el timer de 15 minutos que menciona este plan se
+> reemplazó por la unidad de `contrib/systemd/` (cada 2 minutos) y el stack declara Python 3.11+.
+
 **Meta:** que `obsn rag` devuelva la nota correcta en consultas parafrásticas y que una
 búsqueda tarde decenas de milisegundos en vez de dos segundos.
 

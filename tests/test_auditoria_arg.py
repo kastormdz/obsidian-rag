@@ -5,7 +5,6 @@ Un test por hallazgo confirmado, sobre vaults temporales. Si alguno vuelve, esto
 
 from __future__ import annotations
 
-import os
 import tempfile
 import unittest
 from pathlib import Path

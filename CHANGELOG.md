@@ -8,6 +8,55 @@ puede obligar a reconstruir el índice. Un fix que no rompe nada sube la patch.
 
 ## [Unreleased]
 
+### Added
+
+- **Timer de reindexado en el repo**: `contrib/systemd/obsn-reindex.service` y
+  `obsn-reindex.timer` (cada 2 minutos, unidad de usuario, sin root). La documentación y el
+  worker hablaban de "el timer" como si existiera; ahora se instala con cuatro comandos y el
+  README explica cómo.
+- **`link --exclude DIR` y `OBS_RAG_LINK_EXCLUDE=dir1:dir2`**: las carpetas que `link --apply`
+  nunca toca se pueden configurar. Los defaults siguen siendo los del vault original
+  (`03-Personal/Secrets`, `06-Todo`, `05-Archive`, `.obsidian`) y el entorno/flag **suman**,
+  no reemplazan. El reporte de `--propose` imprime la lista efectiva.
+- **Reparación de vectores faltantes**: si el índice se construyó sin fastembed, los chunks
+  quedaron con `vec = NULL` y el hash de la nota no cambia cuando el modelo aparece. El
+  `reindex` incremental ahora re-trocea la nota por su `ord` y rellena sólo esos vectores.
+- `status --json` suma `embedder` (`ok`/`missing`), `vectors_missing` y `model_available`.
+  La línea humana muestra `embedder=` y, si faltan vectores, un aviso por stderr.
+- **`obsn folders --json` y `obsn tags --json`**: el plugin dejó de parsear la tabla humana
+  con un regex y consume el JSON. El root de `folders` ya no aparece dos veces (`.` y
+  `(root)`): las notas sueltas y los ancestros comparten la etiqueta `(root)`.
+- **Banco de búsqueda autocontenido**: `bench/bench_search.py --fixture` construye un vault
+  temporal desde `bench/fixture/` (11 notas) y mide los mismos casos sin tocar el vault ni el
+  índice reales. `bash bench/gate.sh` lo usa por defecto; `BENCH_REAL=1` vuelve al índice
+  actual. El gate ahora también corre el E2E del plugin y los tests con
+  `-W error::ResourceWarning`.
+- **Los hits avisan `index_stale`**: si la nota cambió desde el build, el rango de líneas
+  guardado ya no apunta a ese chunk. La búsqueda detecta el hash distinto, re-corta la nota
+  y devuelve el chunk con el mismo heading y más términos de la consulta, en vez de mostrar
+  líneas que no son las que se puntuaron.
+
+### Changed
+
+- **Diagnóstico del índice**: `status` y `stale` distinguen un esquema viejo ("no such
+  table": corré `reindex --force`) de un problema de acceso (permisos, lock, archivo que no
+  es una DB). Antes todo decía "índice incompleto, reindexá".
+- **Config a prueba de entorno**: `OBS_RAG_INDEX` y `OBS_RAG_CACHE` se resuelven a absolutos
+  (un `OBS_RAG_INDEX=index.db` relativo ya no depende del `chdir` posterior), un índice con
+  nombre pelado no explota en `os.makedirs("")`, y un `OBS_RAG_STALE_PENALTY` inválido vuelve
+  al default `0.75` con un warning en vez de un traceback al importar.
+- **Worker con marca dirty**: el CLI deja una marca antes de lanzar el worker y el worker la
+  borra justo antes de listar. Una escritura que llega durante el build dispara una pasada
+  más (hasta 3) en lugar de esperar al próximo write.
+- **CI**: `-W error::ResourceWarning` en los tests unitarios y `tests/e2e_cli.py`
+  (32 chequeos) además del E2E del plugin (38).
+- **`requires-python` pasa a `>=3.11`**: el código corre en 3.10, pero el stack de
+  dependencias no. En 3.10 pip resuelve `onnxruntime` 1.16.3 (el último con wheel cp310),
+  anterior al soporte de NumPy 2, y no levanta con el `numpy>=1.26` que instala pip. Declarar
+  3.11+ es más honesto que un `>=3.10` que falla al cargar el modelo.
+- Los tests cierran sus conexiones SQLite (`conexion()` en vez de `with sqlite3.connect`):
+  eran 15 `ResourceWarning` al final de la suite.
+
 ## [0.6.0] - 2026-11-02
 
 ### Changed

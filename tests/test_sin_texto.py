@@ -6,6 +6,7 @@ dos mitades del contrato: que el texto NO esté en la DB y que se reconstruya id
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 import tempfile
 import unittest
@@ -16,6 +17,11 @@ NOTAS = {
     "bodega.md": f"# Bodega\n\n{FRASE}.\n",
     "otra.md": "# Otra\n\nDocker compose y volúmenes persistentes para los servicios.\n",
 }
+
+
+def conexion(db):
+    """`with sqlite3.connect(db)` commits but does NOT close (ResourceWarning)."""
+    return contextlib.closing(sqlite3.connect(db))
 
 
 class SinTextoEnClaro(unittest.TestCase):
@@ -43,7 +49,7 @@ class SinTextoEnClaro(unittest.TestCase):
         self._dir.cleanup()
 
     def test_la_tabla_chunks_no_tiene_columna_text(self) -> None:
-        with sqlite3.connect(self.idx.DB) as c:
+        with conexion(self.idx.DB) as c:
             columnas = {r[1] for r in c.execute("PRAGMA table_info(chunks)")}
         self.assertNotIn("text", columnas)
         self.assertIn("off_start", columnas)
@@ -51,7 +57,7 @@ class SinTextoEnClaro(unittest.TestCase):
 
     def test_el_contenido_no_esta_en_la_db_ni_en_el_wal(self) -> None:
         # Checkpoint para que el WAL no esconda datos recién escritos.
-        with sqlite3.connect(self.idx.DB) as c:
+        with conexion(self.idx.DB) as c:
             c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         crudo = b""
         for sufijo in ("", "-wal"):
@@ -66,7 +72,7 @@ class SinTextoEnClaro(unittest.TestCase):
     def test_el_texto_se_reconstruye_igual_que_el_chunker(self) -> None:
         cuerpo = (self.vault / "bodega.md").read_text(encoding="utf-8")
         original = [ch["text"] for ch in self.idx.chunk(cuerpo)]
-        with sqlite3.connect(self.idx.DB) as c:
+        with conexion(self.idx.DB) as c:
             rangos = list(c.execute(
                 "SELECT off_start, off_end FROM chunks WHERE path='bodega.md' ORDER BY ord"))
         reconstruido = [self.idx._texto_del_chunk("bodega.md", a, b) for a, b in rangos]
